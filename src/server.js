@@ -323,12 +323,26 @@ app.post('/api/usage', async (request, response, next) => {
   try {
     await ensureSchema()
     const userPhone = typeof request.body.userPhone === 'string' ? request.body.userPhone.replace(/\D/g, '') : null
+    const userName = typeof request.body.userName === 'string' && request.body.userName.trim() ? request.body.userName.trim() : null
     const deviceId = typeof request.body.deviceId === 'string' && request.body.deviceId.trim() ? request.body.deviceId.trim() : null
+    const appVersion = typeof request.body.appVersion === 'string' && request.body.appVersion.trim() ? request.body.appVersion.trim() : null
+    const platform = typeof request.body.platform === 'string' && request.body.platform.trim() ? request.body.platform.trim() : null
+    const metadata = request.body.metadata && typeof request.body.metadata === 'object' ? request.body.metadata : {}
     if (!deviceId) return response.status(400).json({ error: 'Device identifier is required' })
 
     const { rows } = await query(
-      'INSERT INTO app_usage (id, user_phone, device_id, visited_at) VALUES ($1, $2, $3, NOW()) RETURNING id, user_phone AS "userPhone", device_id AS "deviceId", visited_at AS "visitedAt"',
-      [randomUUID(), userPhone || null, deviceId],
+      `INSERT INTO app_usage (id, user_phone, user_name, device_id, app_version, platform, metadata, visited_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NOW())
+       ON CONFLICT (device_id)
+       DO UPDATE SET
+         user_phone = COALESCE(app_usage.user_phone, EXCLUDED.user_phone),
+         user_name = COALESCE(EXCLUDED.user_name, app_usage.user_name),
+         app_version = COALESCE(EXCLUDED.app_version, app_usage.app_version),
+         platform = COALESCE(EXCLUDED.platform, app_usage.platform),
+         metadata = COALESCE(app_usage.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
+         visited_at = NOW()
+       RETURNING id, user_phone AS "userPhone", user_name AS "userName", device_id AS "deviceId", app_version AS "appVersion", platform, metadata, visited_at AS "visitedAt"`,
+      [randomUUID(), userPhone || null, userName || null, deviceId, appVersion || null, platform || null, JSON.stringify(metadata)],
     )
     response.status(201).json({ data: rows[0] })
   } catch (error) {

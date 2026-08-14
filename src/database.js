@@ -113,10 +113,32 @@ export function ensureSchema() {
       CREATE TABLE IF NOT EXISTS app_usage (
         id TEXT PRIMARY KEY,
         user_phone TEXT REFERENCES users(phone) ON DELETE SET NULL,
+        user_name TEXT,
         device_id TEXT NOT NULL,
+        app_version TEXT,
+        platform TEXT,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
         visited_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      WITH ranked_usage AS (
+        SELECT id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY device_id
+                 ORDER BY visited_at DESC, created_at DESC, id DESC
+               ) AS row_num
+        FROM app_usage
+      )
+      DELETE FROM app_usage
+      WHERE id IN (
+        SELECT id FROM ranked_usage WHERE row_num > 1
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS app_usage_device_id_unique
+        ON app_usage(device_id);
+      ALTER TABLE app_usage ADD COLUMN IF NOT EXISTS user_name TEXT;
+      ALTER TABLE app_usage ADD COLUMN IF NOT EXISTS app_version TEXT;
+      ALTER TABLE app_usage ADD COLUMN IF NOT EXISTS platform TEXT;
+      ALTER TABLE app_usage ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
       ALTER TABLE categories ADD COLUMN IF NOT EXISTS created_by TEXT;
       ALTER TABLE categories ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
       ALTER TABLE categories ADD COLUMN IF NOT EXISTS updated_by TEXT;
