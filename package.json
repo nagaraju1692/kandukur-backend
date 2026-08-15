@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "seed": "node src/seed.js"
+    "migrate-images": "node src/migrate-images.js"
   },
   "dependencies": {
+    "@azure/storage-blob": "^12.33.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",

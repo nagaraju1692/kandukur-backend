@@ -1,51 +1,21 @@
-import 'dotenv/config'
+import dotenv from 'dotenv'
 import cors from 'cors'
 import express from 'express'
-import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import multer from 'multer'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { downloadBlob, ensureBlobContainer, uploadBlob } from './blobStorage.js'
 import { ensureSchema, query } from './database.js'
+
+dotenv.config({ path: '.env.local' })
+dotenv.config()
 
 const app = express()
 const port = Number(process.env.PORT || 4000)
 const defaultSuperAdminPhone = '8807380269'
-const backendDirectory = path.dirname(fileURLToPath(import.meta.url))
-const imageDirectory = path.resolve(backendDirectory, '../images')
-const announcementImageDirectory = path.resolve(imageDirectory, 'announcements')
-const businessImageDirectory = path.resolve(imageDirectory, 'businesses')
 
-if (!fs.existsSync(announcementImageDirectory)) {
-  fs.mkdirSync(announcementImageDirectory, { recursive: true })
-}
-if (!fs.existsSync(businessImageDirectory)) {
-  fs.mkdirSync(businessImageDirectory, { recursive: true })
-}
-
-const announcementUpload = multer({
-  storage: multer.diskStorage({
-    destination: (_request, _file, callback) => callback(null, announcementImageDirectory),
-    filename: (_request, file, callback) => {
-      const extension = path.extname(file.originalname || '').toLowerCase() || '.jpg'
-      callback(null, `${randomUUID()}${extension}`)
-    },
-  }),
-  limits: { fileSize: 8 * 1024 * 1024 },
-  fileFilter: (_request, file, callback) => {
-    if (file.mimetype?.startsWith('image/')) return callback(null, true)
-    return callback(new Error('Only image uploads are allowed'))
-  },
-})
-
-const businessImageUpload = multer({
-  storage: multer.diskStorage({
-    destination: (_request, _file, callback) => callback(null, businessImageDirectory),
-    filename: (_request, file, callback) => {
-      const extension = path.extname(file.originalname || '').toLowerCase() || '.jpg'
-      callback(null, `${randomUUID()}${extension}`)
-    },
-  }),
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (_request, file, callback) => {
     if (file.mimetype?.startsWith('image/')) return callback(null, true)
@@ -55,7 +25,29 @@ const businessImageUpload = multer({
 
 app.use(cors())
 app.use(express.json())
-app.use('/images', express.static(imageDirectory))
+app.use('/images', async (request, response, next) => {
+  const blobName = request.path.replace(/^\/+/, '')
+  if (!blobName) return response.status(404).end()
+  try {
+    const blobResponse = await downloadBlob(blobName)
+    if (blobResponse.contentType) response.type(blobResponse.contentType)
+    if (blobResponse.contentLength) response.set('Content-Length', String(blobResponse.contentLength))
+    if (blobResponse.readableStreamBody) blobResponse.readableStreamBody.pipe(response)
+    else response.status(404).end()
+  } catch (error) {
+    if (error.statusCode === 404) return response.status(404).end()
+    next(error)
+  }
+})
+
+async function uploadAdminImage(request, response, directory) {
+  if (!request.file) return response.status(400).json({ error: 'Image file is required' })
+  const extension = path.extname(request.file.originalname || '').toLowerCase() || '.jpg'
+  const blobName = `${directory}/${randomUUID()}${extension}`
+  await uploadBlob(blobName, request.file.buffer, request.file.mimetype)
+  const imagePath = `/images/${blobName}`
+  return response.status(201).json({ data: { image: publicImageUrl(request, imagePath), path: imagePath } })
+}
 
 function publicImageUrl(request, image) {
   if (!image || image.startsWith('http')) return image
@@ -496,17 +488,19 @@ app.get('/api/announcements', async (_request, response, next) => {
 app.post('/api/admin/uploads/announcement-image', async (request, response, next) => {
   try {
     await ensureSchema()
+    await ensureBlobContainer()
     const user = await requireAdmin(request, response)
     if (!user) return
 
-    announcementUpload.single('image')(request, response, (uploadError) => {
+    imageUpload.single('image')(request, response, async (uploadError) => {
       if (uploadError) {
         return response.status(400).json({ error: uploadError.message || 'Unable to upload image' })
       }
-      if (!request.file) return response.status(400).json({ error: 'Image file is required' })
-
-      const imagePath = `/images/announcements/${request.file.filename}`
-      return response.status(201).json({ data: { image: publicImageUrl(request, imagePath), path: imagePath } })
+      try {
+        return await uploadAdminImage(request, response, 'announcements')
+      } catch (error) {
+        return next(error)
+      }
     })
   } catch (error) {
     next(error)
@@ -516,17 +510,19 @@ app.post('/api/admin/uploads/announcement-image', async (request, response, next
 app.post('/api/admin/uploads/business-image', async (request, response, next) => {
   try {
     await ensureSchema()
+    await ensureBlobContainer()
     const user = await requireAdmin(request, response)
     if (!user) return
 
-    businessImageUpload.single('image')(request, response, (uploadError) => {
+    imageUpload.single('image')(request, response, async (uploadError) => {
       if (uploadError) {
         return response.status(400).json({ error: uploadError.message || 'Unable to upload image' })
       }
-      if (!request.file) return response.status(400).json({ error: 'Image file is required' })
-
-      const imagePath = `/images/businesses/${request.file.filename}`
-      return response.status(201).json({ data: { image: publicImageUrl(request, imagePath), path: imagePath } })
+      try {
+        return await uploadAdminImage(request, response, 'businesses')
+      } catch (error) {
+        return next(error)
+      }
     })
   } catch (error) {
     next(error)
