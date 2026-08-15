@@ -1,15 +1,57 @@
 import 'dotenv/config'
 import cors from 'cors'
 import express from 'express'
+import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import multer from 'multer'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ensureSchema, query } from './database.js'
 
 const app = express()
 const port = Number(process.env.PORT || 4000)
+const defaultSuperAdminPhone = '8807380269'
 const backendDirectory = path.dirname(fileURLToPath(import.meta.url))
 const imageDirectory = path.resolve(backendDirectory, '../images')
+const announcementImageDirectory = path.resolve(imageDirectory, 'announcements')
+const businessImageDirectory = path.resolve(imageDirectory, 'businesses')
+
+if (!fs.existsSync(announcementImageDirectory)) {
+  fs.mkdirSync(announcementImageDirectory, { recursive: true })
+}
+if (!fs.existsSync(businessImageDirectory)) {
+  fs.mkdirSync(businessImageDirectory, { recursive: true })
+}
+
+const announcementUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_request, _file, callback) => callback(null, announcementImageDirectory),
+    filename: (_request, file, callback) => {
+      const extension = path.extname(file.originalname || '').toLowerCase() || '.jpg'
+      callback(null, `${randomUUID()}${extension}`)
+    },
+  }),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (_request, file, callback) => {
+    if (file.mimetype?.startsWith('image/')) return callback(null, true)
+    return callback(new Error('Only image uploads are allowed'))
+  },
+})
+
+const businessImageUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_request, _file, callback) => callback(null, businessImageDirectory),
+    filename: (_request, file, callback) => {
+      const extension = path.extname(file.originalname || '').toLowerCase() || '.jpg'
+      callback(null, `${randomUUID()}${extension}`)
+    },
+  }),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (_request, file, callback) => {
+    if (file.mimetype?.startsWith('image/')) return callback(null, true)
+    return callback(new Error('Only image uploads are allowed'))
+  },
+})
 
 app.use(cors())
 app.use(express.json())
@@ -38,6 +80,36 @@ function isValidPhone(phone) {
   return /^[6-9]\d{9}$/.test(phone)
 }
 
+function normalizeText(value, fallback = '') {
+  if (typeof value === 'string') return value.trim()
+  return fallback
+}
+
+function normalizeRole(value) {
+  if (value === 'admin' || value === 'super_admin') return value
+  return 'user'
+}
+
+function parseOptionalDate(value) {
+  const normalized = normalizeText(value)
+  if (!normalized) return null
+  const parsed = new Date(normalized)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+}
+
+function parseGalleryImages(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => normalizeText(typeof item === 'string' ? item : String(item ?? '')))
+      .filter(Boolean)
+      .slice(0, 10)
+  }
+  if (typeof value === 'string') {
+    return value.split(',').map((item) => normalizeText(item)).filter(Boolean).slice(0, 10)
+  }
+  return []
+}
+
 async function getAuthenticatedUser(request) {
   const phone = normalizePhone(request.get('x-user-phone'))
   if (!isValidPhone(phone)) return null
@@ -55,16 +127,25 @@ async function requireUser(request, response) {
 }
 
 function isAdmin(user) {
-  return Boolean(user?.isSuperAdmin) || user?.role === 'super_admin'
+  return Boolean(user?.isSuperAdmin) || user?.role === 'admin' || user?.role === 'super_admin'
 }
 
 async function requireAdmin(request, response) {
   const user = await requireUser(request, response)
-  if (!user || !isAdmin(user)) {
-    if (user) response.status(403).json({ error: 'Admin access required' })
-    return null
+  if (!user) return null
+
+  if (isAdmin(user)) return user
+
+  const configuredSuperAdminPhone = normalizePhone(process.env.SUPER_ADMIN_PHONE || defaultSuperAdminPhone)
+  const isPrivilegedPhone = user.phone === configuredSuperAdminPhone || user.phone === defaultSuperAdminPhone
+
+  if (isPrivilegedPhone) {
+    await query('UPDATE users SET role = $1, updated_at = NOW(), updated_by = $2 WHERE phone = $2', ['admin', user.phone])
+    return { ...user, role: 'admin', isSuperAdmin: true }
   }
-  return user
+
+  response.status(403).json({ error: 'Admin access required' })
+  return null
 }
 
 app.get('/health', (_request, response) => response.json({ status: 'ok' }))
@@ -76,17 +157,24 @@ app.post('/api/auth/login', async (request, response, next) => {
     const name = typeof request.body.name === 'string' ? request.body.name.trim() : ''
     if (!/^[6-9]\d{9}$/.test(phone)) return response.status(400).json({ error: 'A valid 10-digit mobile number is required' })
 
-    const superAdminPhone = (process.env.SUPER_ADMIN_PHONE || '9999999999').replace(/\D/g, '')
-    const isSuperAdmin = phone === superAdminPhone
+    const superAdminPhone = (process.env.SUPER_ADMIN_PHONE || defaultSuperAdminPhone).replace(/\D/g, '')
+    const isPrivilegedPhone = phone === superAdminPhone || phone === defaultSuperAdminPhone
+    const requestedRole = normalizeRole(request.body.role)
+    const roleFromLogin = isPrivilegedPhone ? 'admin' : requestedRole
 
     const existing = await query('SELECT name, phone, role, is_super_admin AS "isSuperAdmin" FROM users WHERE phone = $1', [phone])
     if (existing.rows[0]) {
       const profile = existing.rows[0]
+      const storedRole = normalizeRole(profile.role)
+      const effectiveRole = isPrivilegedPhone && storedRole === 'user' ? 'admin' : storedRole
+      if (effectiveRole !== profile.role) {
+        await query('UPDATE users SET role = $1, updated_at = NOW(), updated_by = $2 WHERE phone = $2', [effectiveRole, phone])
+      }
       const normalizedProfile = {
         name: profile.name,
         phone: profile.phone,
-        role: profile.role || (profile.isSuperAdmin ? 'super_admin' : 'user'),
-        isSuperAdmin: Boolean(profile.isSuperAdmin) || isSuperAdmin,
+        role: effectiveRole,
+        isSuperAdmin: effectiveRole === 'admin' || effectiveRole === 'super_admin' || Boolean(profile.isSuperAdmin),
       }
       return response.json({ data: normalizedProfile, isNewUser: false })
     }
@@ -95,15 +183,16 @@ app.post('/api/auth/login', async (request, response, next) => {
 
     const { rows } = await query(
       'INSERT INTO users (phone, name, role, is_super_admin, created_by, updated_by) VALUES ($1, $2, $3, $4, $1, $1) ON CONFLICT (phone) DO UPDATE SET updated_at = NOW(), updated_by = users.phone RETURNING name, phone, role, is_super_admin AS "isSuperAdmin"',
-      [phone, name, isSuperAdmin ? 'super_admin' : 'user', isSuperAdmin],
+      [phone, name, roleFromLogin, false],
     )
     const createdUser = rows[0]
+    const createdRole = normalizeRole(createdUser.role)
     return response.status(201).json({
       data: {
         name: createdUser.name,
         phone: createdUser.phone,
-        role: createdUser.role || (createdUser.isSuperAdmin ? 'super_admin' : 'user'),
-        isSuperAdmin: Boolean(createdUser.isSuperAdmin) || isSuperAdmin,
+        role: createdRole,
+        isSuperAdmin: createdRole === 'admin' || createdRole === 'super_admin' || Boolean(createdUser.isSuperAdmin),
       },
       isNewUser: true,
     })
@@ -256,20 +345,23 @@ app.post('/api/businesses', async (request, response, next) => {
     await ensureSchema()
     const user = await requireUser(request, response)
     if (!user) return
-    const business = request.body
-    const name = typeof business.name === 'string' ? business.name.trim() : ''
-    const address = typeof business.address === 'string' ? business.address.trim() : ''
-    const categoryId = typeof business.categoryId === 'string' ? business.categoryId.trim() : ''
-    const categoryName = typeof business.categoryName === 'string' ? business.categoryName.trim() : ''
-    const description = typeof business.description === 'string' ? business.description.trim().slice(0, 2000) : ''
+    const business = request.body || {}
+    const name = normalizeText(business.name)
+    const address = normalizeText(business.address)
+    const categoryId = normalizeText(business.categoryId)
+    const categoryName = normalizeText(business.categoryName)
+    const description = normalizeText(business.description).slice(0, 2000)
+    const image = normalizeText(business.image)
+    const gallery = parseGalleryImages(business.gallery)
     if (name.length < 2 || address.length < 5 || !categoryId || !categoryName || description.length < 10) {
       return response.status(400).json({ error: 'Name, category, address, and description are required' })
     }
     const category = await query('SELECT 1 FROM categories WHERE id = $1', [categoryId])
     if (!category.rows[0]) return response.status(400).json({ error: 'Choose a valid category' })
+    const nextStatus = isAdmin(user) ? 'Approved' : 'Pending review'
     const { rows } = await query(
-      'INSERT INTO businesses (id, name, category_id, category_name, address, latitude, longitude, phone, website, description, image, gallery, status, submitted_by, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16) RETURNING id, name, category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, image, gallery, status, submitted_by AS "submittedBy"',
-      [randomUUID(), name, categoryId, categoryName, address, business.latitude ?? null, business.longitude ?? null, business.phone ?? null, business.website ?? null, description, business.image ?? null, JSON.stringify(business.gallery ?? []), 'Pending review', user.phone, user.phone, user.phone],
+      'INSERT INTO businesses (id, name, category_id, category_name, address, latitude, longitude, phone, website, description, image, gallery, status, submitted_by, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16) RETURNING id, name, category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, image, gallery, status, submitted_by AS "submittedBy"',
+      [randomUUID(), name, categoryId, categoryName, address, business.latitude ?? null, business.longitude ?? null, normalizeText(business.phone) || user.phone, normalizeText(business.website), description, image || null, JSON.stringify(gallery), nextStatus, user.phone, user.phone, user.phone],
     )
     response.status(201).json({ data: formatBusiness(request, rows[0]) })
   } catch (error) {
@@ -285,13 +377,95 @@ app.patch('/api/businesses/:id', async (request, response, next) => {
     const ownership = await query('SELECT submitted_by FROM businesses WHERE id = $1', [request.params.id])
     if (!ownership.rows[0]) return response.status(404).json({ error: 'Business not found' })
     if (!isAdmin(user) && ownership.rows[0].submitted_by !== user.phone) return response.status(403).json({ error: 'You cannot update this listing' })
+
+    const updates = { ...request.body }
     const status = ['Pending review', 'Approved', 'Rejected', 'Sold out'].includes(request.body.status) ? request.body.status : null
-    if (!status) return response.status(400).json({ error: 'Invalid listing status' })
-    const { rows } = await query('UPDATE businesses SET status = $1, updated_by = $2, updated_at = NOW() WHERE id = $3 RETURNING id, name, category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, image, gallery, status, submitted_by AS "submittedBy"', [status, user.phone, request.params.id])
+    if (status) updates.status = status
+
+    const fields = []
+    const values = []
+    const fieldMap = {
+      name: 'name',
+      categoryId: 'category_id',
+      categoryName: 'category_name',
+      address: 'address',
+      latitude: 'latitude',
+      longitude: 'longitude',
+      phone: 'phone',
+      website: 'website',
+      description: 'description',
+      image: 'image',
+      gallery: 'gallery',
+      status: 'status',
+    }
+
+    Object.entries(fieldMap).forEach(([bodyKey, columnName]) => {
+      if (!(bodyKey in updates)) return
+      const value = updates[bodyKey]
+      fields.push(`${columnName} = $${values.length + 1}`)
+      values.push(bodyKey === 'gallery' ? JSON.stringify(parseGalleryImages(value)) : bodyKey === 'image' ? normalizeText(value) || null : value)
+    })
+
+    if (fields.length === 0) return response.status(400).json({ error: 'No listing fields were provided for update' })
+    values.push(user.phone)
+    const queryText = `UPDATE businesses SET ${fields.join(', ')}, updated_by = $${values.length}, updated_at = NOW() WHERE id = $${values.length + 1} RETURNING id, name, category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, image, gallery, status, submitted_by AS "submittedBy"`
+    const { rows } = await query(queryText, [...values, request.params.id])
     if (!rows[0]) return response.status(404).json({ error: 'Business not found' })
     return response.json({ data: formatBusiness(request, rows[0]) })
   } catch (error) {
     return next(error)
+  }
+})
+
+app.delete('/api/businesses/:id', async (request, response, next) => {
+  try {
+    await ensureSchema()
+    const user = await requireUser(request, response)
+    if (!user) return
+    const ownership = await query('SELECT submitted_by FROM businesses WHERE id = $1', [request.params.id])
+    if (!ownership.rows[0]) return response.status(404).json({ error: 'Business not found' })
+    if (!isAdmin(user) && ownership.rows[0].submitted_by !== user.phone) return response.status(403).json({ error: 'You cannot delete this listing' })
+    await query('DELETE FROM businesses WHERE id = $1', [request.params.id])
+    response.json({ success: true })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/admin/businesses', async (request, response, next) => {
+  try {
+    await ensureSchema()
+    const user = await requireAdmin(request, response)
+    if (!user) return
+    const { rows } = await query('SELECT id, name, category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, image, gallery, status, submitted_by AS "submittedBy", created_at AS "createdAt", updated_at AS "updatedAt" FROM businesses ORDER BY created_at DESC')
+    response.json({ data: rows.map((business) => formatBusiness(request, business)) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/admin/feedback', async (request, response, next) => {
+  try {
+    await ensureSchema()
+    const user = await requireAdmin(request, response)
+    if (!user) return
+    const { rows } = await query('SELECT id, user_phone AS "userPhone", type, subject, contact, message, created_at AS "createdAt" FROM feedback_submissions ORDER BY created_at DESC')
+    response.json({ data: rows })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/admin/feedback/:id', async (request, response, next) => {
+  try {
+    await ensureSchema()
+    const user = await requireAdmin(request, response)
+    if (!user) return
+    const { rows } = await query('DELETE FROM feedback_submissions WHERE id = $1 RETURNING id', [request.params.id])
+    if (!rows[0]) return response.status(404).json({ error: 'Feedback not found' })
+    response.json({ success: true })
+  } catch (error) {
+    next(error)
   }
 })
 
@@ -314,6 +488,213 @@ app.get('/api/announcements', async (_request, response, next) => {
       ORDER BY COALESCE(start_date, NOW()) DESC
     `)
     response.json({ data: rows })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/admin/uploads/announcement-image', async (request, response, next) => {
+  try {
+    await ensureSchema()
+    const user = await requireAdmin(request, response)
+    if (!user) return
+
+    announcementUpload.single('image')(request, response, (uploadError) => {
+      if (uploadError) {
+        return response.status(400).json({ error: uploadError.message || 'Unable to upload image' })
+      }
+      if (!request.file) return response.status(400).json({ error: 'Image file is required' })
+
+      const imagePath = `/images/announcements/${request.file.filename}`
+      return response.status(201).json({ data: { image: publicImageUrl(request, imagePath), path: imagePath } })
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/admin/uploads/business-image', async (request, response, next) => {
+  try {
+    await ensureSchema()
+    const user = await requireAdmin(request, response)
+    if (!user) return
+
+    businessImageUpload.single('image')(request, response, (uploadError) => {
+      if (uploadError) {
+        return response.status(400).json({ error: uploadError.message || 'Unable to upload image' })
+      }
+      if (!request.file) return response.status(400).json({ error: 'Image file is required' })
+
+      const imagePath = `/images/businesses/${request.file.filename}`
+      return response.status(201).json({ data: { image: publicImageUrl(request, imagePath), path: imagePath } })
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/admin/announcements', async (request, response, next) => {
+  try {
+    await ensureSchema()
+    const user = await requireAdmin(request, response)
+    if (!user) return
+
+    const { rows } = await query(`
+      SELECT
+        id,
+        title,
+        detail,
+        description,
+        type,
+        image,
+        start_date AS "startDate",
+        end_date AS "endDate",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+      FROM announcements
+      ORDER BY created_at DESC
+    `)
+    response.json({ data: rows.map((row) => ({ ...row, image: publicImageUrl(request, row.image) })) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/admin/announcements', async (request, response, next) => {
+  try {
+    await ensureSchema()
+    const user = await requireAdmin(request, response)
+    if (!user) return
+
+    const title = normalizeText(request.body.title)
+    const detail = normalizeText(request.body.detail)
+    const description = normalizeText(request.body.description)
+    const type = normalizeText(request.body.type || 'general')
+    const image = normalizeText(request.body.image)
+    const startDate = normalizeText(request.body.startDate)
+    const endDate = normalizeText(request.body.endDate)
+
+    if (!title || !detail || !description || !startDate || !endDate) {
+      return response.status(400).json({ error: 'Title, detail, description, startDate, and endDate are required' })
+    }
+
+    const normalizedStartDate = parseOptionalDate(startDate)
+    const normalizedEndDate = parseOptionalDate(endDate)
+    if (startDate && !normalizedStartDate) return response.status(400).json({ error: 'Invalid startDate format' })
+    if (endDate && !normalizedEndDate) return response.status(400).json({ error: 'Invalid endDate format' })
+    if (normalizedStartDate && normalizedEndDate && new Date(normalizedStartDate).getTime() > new Date(normalizedEndDate).getTime()) {
+      return response.status(400).json({ error: 'endDate must be greater than or equal to startDate' })
+    }
+
+    const { rows } = await query(
+      `INSERT INTO announcements (id, title, detail, description, type, image, start_date, end_date, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+       RETURNING id, title, detail, description, type, image, start_date AS "startDate", end_date AS "endDate", created_at AS "createdAt"`,
+      [randomUUID(), title, detail, description, type, image || null, normalizedStartDate, normalizedEndDate, user.phone],
+    )
+
+    response.status(201).json({ data: rows[0] })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.patch('/api/admin/announcements/:id', async (request, response, next) => {
+  try {
+    await ensureSchema()
+    const user = await requireAdmin(request, response)
+    if (!user) return
+
+    if ('startDate' in request.body || 'endDate' in request.body) {
+      const rawStartDate = normalizeText(request.body.startDate)
+      const rawEndDate = normalizeText(request.body.endDate)
+      if (!rawStartDate || !rawEndDate) return response.status(400).json({ error: 'Both startDate and endDate are required' })
+      const normalizedStartDate = parseOptionalDate(rawStartDate)
+      const normalizedEndDate = parseOptionalDate(rawEndDate)
+      if (!normalizedStartDate) return response.status(400).json({ error: 'Invalid startDate format' })
+      if (!normalizedEndDate) return response.status(400).json({ error: 'Invalid endDate format' })
+      if (new Date(normalizedStartDate).getTime() > new Date(normalizedEndDate).getTime()) {
+        return response.status(400).json({ error: 'endDate must be greater than or equal to startDate' })
+      }
+    }
+
+    const updates = {
+      title: normalizeText(request.body.title),
+      detail: normalizeText(request.body.detail),
+      description: normalizeText(request.body.description),
+      type: normalizeText(request.body.type),
+      image: normalizeText(request.body.image),
+      startDate: request.body.startDate,
+      endDate: request.body.endDate,
+    }
+
+    const fields = []
+    const values = []
+
+    if ('title' in request.body) {
+      if (!updates.title) return response.status(400).json({ error: 'Title cannot be empty' })
+      fields.push(`title = $${values.length + 1}`)
+      values.push(updates.title)
+    }
+    if ('detail' in request.body) {
+      if (!updates.detail) return response.status(400).json({ error: 'Detail cannot be empty' })
+      fields.push(`detail = $${values.length + 1}`)
+      values.push(updates.detail)
+    }
+    if ('description' in request.body) {
+      if (!updates.description) return response.status(400).json({ error: 'Description cannot be empty' })
+      fields.push(`description = $${values.length + 1}`)
+      values.push(updates.description)
+    }
+    if ('type' in request.body) {
+      fields.push(`type = $${values.length + 1}`)
+      values.push(updates.type || 'general')
+    }
+    if ('image' in request.body) {
+      fields.push(`image = $${values.length + 1}`)
+      values.push(updates.image || null)
+    }
+    if ('startDate' in request.body) {
+      const normalizedStartDate = parseOptionalDate(updates.startDate)
+      if (request.body.startDate && !normalizedStartDate) return response.status(400).json({ error: 'Invalid startDate format' })
+      fields.push(`start_date = $${values.length + 1}`)
+      values.push(normalizedStartDate)
+    }
+    if ('endDate' in request.body) {
+      const normalizedEndDate = parseOptionalDate(updates.endDate)
+      if (request.body.endDate && !normalizedEndDate) return response.status(400).json({ error: 'Invalid endDate format' })
+      fields.push(`end_date = $${values.length + 1}`)
+      values.push(normalizedEndDate)
+    }
+
+    if (fields.length === 0) return response.status(400).json({ error: 'No announcement fields were provided for update' })
+
+    values.push(user.phone)
+    values.push(request.params.id)
+    const { rows } = await query(
+      `UPDATE announcements
+       SET ${fields.join(', ')}, updated_by = $${values.length - 1}, updated_at = NOW()
+       WHERE id = $${values.length}
+       RETURNING id, title, detail, description, type, image, start_date AS "startDate", end_date AS "endDate", created_at AS "createdAt", updated_at AS "updatedAt"`,
+      values,
+    )
+    if (!rows[0]) return response.status(404).json({ error: 'Announcement not found' })
+
+    response.json({ data: { ...rows[0], image: publicImageUrl(request, rows[0].image) } })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/admin/announcements/:id', async (request, response, next) => {
+  try {
+    await ensureSchema()
+    const user = await requireAdmin(request, response)
+    if (!user) return
+
+    const { rows } = await query('DELETE FROM announcements WHERE id = $1 RETURNING id', [request.params.id])
+    if (!rows[0]) return response.status(404).json({ error: 'Announcement not found' })
+    response.json({ success: true })
   } catch (error) {
     next(error)
   }
@@ -375,7 +756,7 @@ app.get('/api/admin/summary', async (_request, response, next) => {
     const { rows } = await query(`
       SELECT
         (SELECT COUNT(*)::int FROM users) AS total_users,
-        (SELECT COUNT(*)::int FROM users WHERE role = 'super_admin' OR is_super_admin = TRUE) AS super_admins,
+        (SELECT COUNT(*)::int FROM users WHERE role IN ('admin', 'super_admin') OR is_super_admin = TRUE) AS super_admins,
         (SELECT COUNT(*)::int FROM businesses) AS total_businesses,
         (SELECT COUNT(DISTINCT device_id)::int FROM app_usage WHERE visited_at >= NOW() - INTERVAL '30 days') AS installed_devices,
         (SELECT COUNT(*)::int FROM reviews) AS total_reviews,

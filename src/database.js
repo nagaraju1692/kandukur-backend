@@ -66,14 +66,14 @@ export function ensureSchema() {
         detail TEXT NOT NULL,
         description TEXT NOT NULL,
         type TEXT NOT NULL,
-        image TEXT NOT NULL,
+        image TEXT,
         start_date TIMESTAMPTZ,
         end_date TIMESTAMPTZ
       );
       CREATE TABLE IF NOT EXISTS users (
         phone TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'super_admin')),
+        role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin', 'super_admin')),
         is_super_admin BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -146,6 +146,40 @@ export function ensureSchema() {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
       ALTER TABLE users ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN NOT NULL DEFAULT FALSE;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+      DO $$
+      DECLARE
+        role_constraint_name TEXT;
+      BEGIN
+        SELECT c.conname
+        INTO role_constraint_name
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE t.relname = 'users'
+          AND n.nspname = 'public'
+          AND c.contype = 'c'
+          AND pg_get_constraintdef(c.oid) ILIKE '%role%'
+          AND pg_get_constraintdef(c.oid) ILIKE '%super_admin%'
+        LIMIT 1;
+
+        IF role_constraint_name IS NOT NULL THEN
+          EXECUTE format('ALTER TABLE public.users DROP CONSTRAINT %I', role_constraint_name);
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE t.relname = 'users'
+            AND n.nspname = 'public'
+            AND c.conname = 'users_role_check'
+        ) THEN
+          ALTER TABLE public.users
+            ADD CONSTRAINT users_role_check
+            CHECK (role IN ('user', 'admin', 'super_admin'));
+        END IF;
+      END $$;
       ALTER TABLE businesses ADD COLUMN IF NOT EXISTS created_by TEXT;
       ALTER TABLE businesses ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
       ALTER TABLE businesses ADD COLUMN IF NOT EXISTS updated_by TEXT;
@@ -158,6 +192,7 @@ export function ensureSchema() {
       ALTER TABLE announcements ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
       ALTER TABLE announcements ADD COLUMN IF NOT EXISTS start_date TIMESTAMPTZ;
       ALTER TABLE announcements ADD COLUMN IF NOT EXISTS end_date TIMESTAMPTZ;
+      ALTER TABLE announcements ALTER COLUMN image DROP NOT NULL;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_by TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
