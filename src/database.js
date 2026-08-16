@@ -47,6 +47,7 @@ export function ensureSchema() {
       CREATE TABLE IF NOT EXISTS businesses (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
+        name_te TEXT,
         category_id TEXT NOT NULL,
         category_name TEXT NOT NULL,
         address TEXT NOT NULL,
@@ -55,6 +56,10 @@ export function ensureSchema() {
         phone TEXT,
         website TEXT,
         description TEXT,
+        owner_name TEXT,
+        rooms TEXT,
+        price TEXT,
+        facing TEXT,
         image TEXT,
         gallery JSONB NOT NULL DEFAULT '[]'::jsonb,
         status TEXT,
@@ -186,6 +191,11 @@ export function ensureSchema() {
       ALTER TABLE businesses ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
       ALTER TABLE businesses ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
       ALTER TABLE businesses ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
+      ALTER TABLE businesses ADD COLUMN IF NOT EXISTS name_te TEXT;
+      ALTER TABLE businesses ADD COLUMN IF NOT EXISTS owner_name TEXT;
+      ALTER TABLE businesses ADD COLUMN IF NOT EXISTS rooms TEXT;
+      ALTER TABLE businesses ADD COLUMN IF NOT EXISTS price TEXT;
+      ALTER TABLE businesses ADD COLUMN IF NOT EXISTS facing TEXT;
       ALTER TABLE announcements ADD COLUMN IF NOT EXISTS created_by TEXT;
       ALTER TABLE announcements ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
       ALTER TABLE announcements ADD COLUMN IF NOT EXISTS updated_by TEXT;
@@ -196,7 +206,204 @@ export function ensureSchema() {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_by TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-    `).catch((error) => {
+    `).then(async () => {
+      const { rows } = await query(`
+        SELECT id FROM categories WHERE name = 'Real Estate' AND parent_id IS NULL LIMIT 1
+      `)
+      if (!rows[0]) return
+      const realEstateId = rows[0].id
+
+      await query(`
+        INSERT INTO categories (id, name, parent_id)
+        VALUES
+          ('plot-for-sale', 'Plot for Sale', $1),
+          ('house-apartment-for-sale', 'House or Apartment for Sale', $1),
+          ('land-for-sale', 'Land for Sale', $1)
+        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_id = EXCLUDED.parent_id
+      `, [realEstateId])
+      await query(`
+        UPDATE businesses
+        SET category_id = 'plot-for-sale', category_name = 'Plot for Sale', updated_at = NOW()
+        WHERE category_name IN ('Plots for Sale', 'Property Agents', 'Properties for Sale')
+           OR category_id IN (SELECT id FROM categories WHERE name IN ('Plots for Sale', 'Property Agents', 'Properties for Sale'))
+      `)
+      await query(`
+        DELETE FROM categories
+        WHERE name IN ('Plots for Sale', 'Property Agents', 'Properties for Sale')
+          AND id NOT IN ('plot-for-sale', 'house-apartment-for-sale', 'land-for-sale')
+      `)
+
+      const { rows: foodCategoryRows } = await query(`
+        SELECT id FROM categories WHERE name = 'Food & Meat Markets' AND parent_id IS NULL LIMIT 1
+      `)
+      if (foodCategoryRows[0]) {
+        await query(`
+          UPDATE categories
+          SET parent_id = $1
+          WHERE name IN ('Fish Markets', 'Fruit Markets', 'Vegetable Markets')
+        `, [foodCategoryRows[0].id])
+      }
+
+      const { rows: agricultureCategoryRows } = await query(`
+        SELECT id FROM categories WHERE name = 'Agriculture' AND parent_id IS NULL LIMIT 1
+      `)
+      if (agricultureCategoryRows[0]) {
+        await query(`
+          UPDATE categories
+          SET parent_id = $1
+          WHERE name = 'Tobacco Boards'
+        `, [agricultureCategoryRows[0].id])
+      }
+
+      await query(`
+        UPDATE businesses
+        SET image = CASE id
+          WHEN 'ext11' THEN 'https://images.unsplash.com/photo-1601598851547-4302969d0614?auto=format&fit=crop&w=1200&q=80'
+          WHEN 'retail1' THEN 'https://images.unsplash.com/photo-1604719312566-8912e9227c6a?auto=format&fit=crop&w=1200&q=80'
+          WHEN 'retail2' THEN 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=1200&q=80'
+          WHEN 'retail3' THEN 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=1200&q=80'
+          WHEN 'retail4' THEN 'https://images.unsplash.com/photo-1586023492125-27b2c045efd7?auto=format&fit=crop&w=1200&q=80'
+          ELSE image
+        END,
+        updated_at = NOW()
+        WHERE id IN ('ext11', 'retail1', 'retail2', 'retail3', 'retail4')
+          AND image = 'https://images.unsplash.com/photo-1542831371-d531d36971e6?auto=format&fit=crop&w=1200&q=80'
+      `)
+
+      await query(`
+        UPDATE businesses
+        SET name = CASE id
+              WHEN 'beauty1' THEN 'Veena''s Beauty Salon'
+              WHEN 'beauty2' THEN 'Chaitanya Skin & Beauty Clinic'
+              WHEN 'beauty3' THEN 'Style & Smile Beauty Salon'
+              WHEN 'beauty4' THEN 'QBS Unisex Salon'
+              WHEN 'beauty5' THEN 'Charmi Beauty Salon'
+              WHEN 'beauty6' THEN 'Old Fish Market Beauty Salon'
+              ELSE name
+            END,
+            image = CASE id
+              WHEN 'beauty1' THEN 'https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=1200&q=80'
+              WHEN 'beauty2' THEN 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=1200&q=80'
+              WHEN 'beauty3' THEN 'https://images.unsplash.com/photo-1512496015851-a90fb38ba796?auto=format&fit=crop&w=1200&q=80'
+              WHEN 'beauty4' THEN 'https://images.unsplash.com/photo-1487412912498-0447578fcca8?auto=format&fit=crop&w=1200&q=80'
+              WHEN 'beauty5' THEN 'https://images.unsplash.com/photo-1605497788044-5a32c7078486?auto=format&fit=crop&w=1200&q=80'
+              WHEN 'beauty6' THEN 'https://images.unsplash.com/photo-1562322140-8baeececf3df?auto=format&fit=crop&w=1200&q=80'
+              ELSE image
+            END,
+            updated_at = NOW()
+        WHERE id IN ('beauty1', 'beauty2', 'beauty3', 'beauty4', 'beauty5', 'beauty6')
+          AND image = 'https://images.unsplash.com/photo-1501004318641-b39e6451bec6?auto=format&fit=crop&w=1200&q=80'
+      `)
+
+      await query(`
+        UPDATE businesses
+        SET name = CASE id
+              WHEN 'wine2' THEN 'Gayathri Wine Shop'
+              WHEN 'wine3' THEN 'Sri Mallikarjuna Wines'
+              WHEN 'wine4' THEN 'Surya Bar & Restaurant'
+              ELSE name
+            END,
+            image = CASE id
+              WHEN 'ext12' THEN 'https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?auto=format&fit=crop&w=1200&q=80'
+              WHEN 'wine1' THEN 'https://images.unsplash.com/photo-1473973266408-ed4e27abdd47?auto=format&fit=crop&w=1200&q=80'
+              WHEN 'wine2' THEN 'https://images.unsplash.com/photo-1506377247377-2a5b3b5a9b0b?auto=format&fit=crop&w=1200&q=80'
+              WHEN 'wine3' THEN 'https://images.unsplash.com/photo-1515003197210-e0cd71810b5f?auto=format&fit=crop&w=1200&q=80'
+              WHEN 'wine4' THEN 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=1200&q=80'
+              ELSE image
+            END,
+            updated_at = NOW()
+        WHERE id IN ('ext12', 'wine1', 'wine2', 'wine3', 'wine4')
+          AND image = 'https://images.unsplash.com/photo-1547592166-4b6f2b7c0d8b?auto=format&fit=crop&w=1200&q=80'
+      `)
+
+          await query(`
+          UPDATE businesses
+          SET image = 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?auto=format&fit=crop&w=1200&q=80',
+            updated_at = NOW()
+          WHERE id = 'h3'
+            AND image = 'https://images.unsplash.com/photo-1538108149393-fbbd81895973?auto=format&fit=crop&w=1200&q=80'
+          `)
+
+        await query(`
+          UPDATE businesses
+          SET name_te = CASE id
+            WHEN 'h5' THEN 'ప్రణవి చిల్డ్రన్స్ హాస్పిటల్ అండ్ ఐ కేర్'
+            WHEN 'r1' THEN 'సాయి సాగర్ గ్రాండ్ ఫ్యామిలీ డైనింగ్'
+            ELSE name_te
+          END,
+          updated_at = NOW()
+          WHERE id IN ('h5', 'r1') AND name_te IS NULL
+        `)
+
+        await query(`
+          UPDATE businesses
+          SET name_te = CASE name
+            WHEN 'Woodland Premium Family Kitchen' THEN 'వుడ్‌ల్యాండ్ ప్రీమియం ఫ్యామిలీ కిచెన్'
+            WHEN 'MedPlus Ramalayam Street' THEN 'మెడ్‌ప్లస్ రామాలయం స్ట్రీట్'
+            ELSE name_te
+          END,
+          updated_at = NOW()
+          WHERE name IN ('Woodland Premium Family Kitchen', 'MedPlus Ramalayam Street')
+            AND name_te IS NULL
+        `)
+
+      await query(`
+        WITH duplicate_categories AS (
+          SELECT id,
+                 FIRST_VALUE(id) OVER (PARTITION BY name ORDER BY id) AS retained_id,
+                 ROW_NUMBER() OVER (PARTITION BY name ORDER BY id) AS row_number
+          FROM categories
+          WHERE name IN ('Fish Markets', 'Fruit Markets', 'Vegetable Markets')
+        )
+        UPDATE businesses
+        SET category_id = duplicate_categories.retained_id,
+            updated_at = NOW()
+        FROM duplicate_categories
+        WHERE businesses.category_id = duplicate_categories.id
+          AND duplicate_categories.row_number > 1
+      `)
+      await query(`
+        WITH duplicate_categories AS (
+          SELECT id,
+                 ROW_NUMBER() OVER (PARTITION BY name ORDER BY id) AS row_number
+          FROM categories
+          WHERE name IN ('Fish Markets', 'Fruit Markets', 'Vegetable Markets')
+        )
+        DELETE FROM categories
+        WHERE id IN (SELECT id FROM duplicate_categories WHERE row_number > 1)
+      `)
+
+      await query(`
+        INSERT INTO categories (id, name, parent_id)
+        VALUES ('common-utilities', 'Common Utilities', NULL)
+        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_id = EXCLUDED.parent_id
+      `)
+
+      await query(`
+        INSERT INTO categories (id, name, parent_id)
+        VALUES ('buy-and-sell', 'Buy & Sell', NULL)
+        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_id = EXCLUDED.parent_id
+      `)
+      await query(`
+        INSERT INTO categories (id, name, parent_id)
+        VALUES
+          ('cars-for-sale', 'Cars for Sale', 'buy-and-sell'),
+          ('bikes-for-sale', 'Bikes for Sale', 'buy-and-sell'),
+          ('tractors-for-sale', 'Tractors for Sale', 'buy-and-sell'),
+          ('other-items-for-sale', 'Other Items for Sale', 'buy-and-sell')
+        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_id = EXCLUDED.parent_id
+      `)
+      await query(`
+        INSERT INTO categories (id, name, parent_id)
+        VALUES
+          ('atm-centers', 'ATM Centers', 'common-utilities'),
+          ('petrol-pumps', 'Petrol Pumps', 'common-utilities'),
+          ('gas-centers', 'Gas Centers', 'common-utilities'),
+          ('ev-charging-stations', 'EV Charging Stations', 'common-utilities'),
+          ('public-toilets', 'Public Toilets', 'common-utilities')
+        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_id = EXCLUDED.parent_id
+      `)
+    }).catch((error) => {
       schemaPromise = undefined
       throw error
     })

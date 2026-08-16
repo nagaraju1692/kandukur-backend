@@ -102,6 +102,8 @@ function parseGalleryImages(value) {
   return []
 }
 
+const directPostingCategoryNames = new Set(['Real Estate', 'Rental Transport', 'Construction Materials', 'Buy & Sell'])
+
 async function getAuthenticatedUser(request) {
   const phone = normalizePhone(request.get('x-user-phone'))
   if (!isValidPhone(phone)) return null
@@ -297,7 +299,7 @@ app.get('/api/businesses', async (request, response, next) => {
   try {
     await ensureSchema()
     const categoryId = typeof request.query.categoryId === 'string' ? request.query.categoryId : null
-    const statement = `SELECT id, name, category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, image, gallery, status, submitted_by AS "submittedBy" FROM businesses WHERE (status IS NULL OR status <> 'Pending review')${categoryId ? ' AND category_id = $1' : ''}`
+    const statement = `SELECT id, name, name_te AS "nameTe", category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, owner_name AS "ownerName", rooms, price, facing, image, gallery, status, submitted_by AS "submittedBy" FROM businesses WHERE (status IS NULL OR status <> 'Pending review')${categoryId ? ' AND category_id = $1' : ''}`
     const { rows } = await query(statement, categoryId ? [categoryId] : [])
     response.json({ data: rows.map((business) => formatBusiness(request, business)) })
   } catch (error) {
@@ -310,7 +312,7 @@ app.get('/api/users/:phone/submissions', async (request, response, next) => {
     await ensureSchema()
     const user = await requireUser(request, response)
     if (!user || normalizePhone(request.params.phone) !== user.phone) return
-    const { rows } = await query('SELECT id, name, category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, image, gallery, status, submitted_by AS "submittedBy" FROM businesses WHERE submitted_by = $1 ORDER BY created_at DESC', [user.phone])
+    const { rows } = await query('SELECT id, name, name_te AS "nameTe", category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, owner_name AS "ownerName", rooms, price, facing, image, gallery, status, submitted_by AS "submittedBy" FROM businesses WHERE submitted_by = $1 ORDER BY created_at DESC', [user.phone])
     response.json({ data: rows.map((business) => formatBusiness(request, business)) })
   } catch (error) {
     next(error)
@@ -320,7 +322,7 @@ app.get('/api/users/:phone/submissions', async (request, response, next) => {
 app.get('/api/businesses/:id', async (request, response, next) => {
   try {
     await ensureSchema()
-    const { rows } = await query('SELECT id, name, category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, image, gallery, status, submitted_by AS "submittedBy" FROM businesses WHERE id = $1', [request.params.id])
+    const { rows } = await query('SELECT id, name, name_te AS "nameTe", category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, owner_name AS "ownerName", rooms, price, facing, image, gallery, status, submitted_by AS "submittedBy" FROM businesses WHERE id = $1', [request.params.id])
     if (!rows[0]) return response.status(404).json({ error: 'Business not found' })
     if (rows[0].status === 'Pending review') {
       const user = await getAuthenticatedUser(request)
@@ -339,21 +341,36 @@ app.post('/api/businesses', async (request, response, next) => {
     if (!user) return
     const business = request.body || {}
     const name = normalizeText(business.name)
+    const nameTe = normalizeText(business.nameTe)
     const address = normalizeText(business.address)
     const categoryId = normalizeText(business.categoryId)
     const categoryName = normalizeText(business.categoryName)
     const description = normalizeText(business.description).slice(0, 2000)
+    const ownerName = normalizeText(business.ownerName)
+    const rooms = normalizeText(business.rooms)
+    const price = normalizeText(business.price)
+    const facing = normalizeText(business.facing)
     const image = normalizeText(business.image)
     const gallery = parseGalleryImages(business.gallery)
     if (name.length < 2 || address.length < 5 || !categoryId || !categoryName || description.length < 10) {
       return response.status(400).json({ error: 'Name, category, address, and description are required' })
     }
-    const category = await query('SELECT 1 FROM categories WHERE id = $1', [categoryId])
+    const category = await query(
+      `SELECT category.name, parent.name AS "parentName"
+       FROM categories AS category
+       LEFT JOIN categories AS parent ON parent.id = category.parent_id
+       WHERE category.id = $1`,
+      [categoryId],
+    )
     if (!category.rows[0]) return response.status(400).json({ error: 'Choose a valid category' })
-    const nextStatus = isAdmin(user) ? 'Approved' : 'Pending review'
+    const canPublishDirectly = directPostingCategoryNames.has(category.rows[0].name) || directPostingCategoryNames.has(category.rows[0].parentName)
+    if (canPublishDirectly && !price) {
+      return response.status(400).json({ error: 'Price is required for marketplace listings' })
+    }
+    const nextStatus = isAdmin(user) || canPublishDirectly ? 'Approved' : 'Pending review'
     const { rows } = await query(
-      'INSERT INTO businesses (id, name, category_id, category_name, address, latitude, longitude, phone, website, description, image, gallery, status, submitted_by, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16) RETURNING id, name, category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, image, gallery, status, submitted_by AS "submittedBy"',
-      [randomUUID(), name, categoryId, categoryName, address, business.latitude ?? null, business.longitude ?? null, normalizeText(business.phone) || user.phone, normalizeText(business.website), description, image || null, JSON.stringify(gallery), nextStatus, user.phone, user.phone, user.phone],
+      'INSERT INTO businesses (id, name, name_te, category_id, category_name, address, latitude, longitude, phone, website, description, owner_name, rooms, price, facing, image, gallery, status, submitted_by, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, $19, $20, $21) RETURNING id, name, name_te AS "nameTe", category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, owner_name AS "ownerName", rooms, price, facing, image, gallery, status, submitted_by AS "submittedBy"',
+      [randomUUID(), name, nameTe || null, categoryId, categoryName, address, business.latitude ?? null, business.longitude ?? null, normalizeText(business.phone) || (canPublishDirectly ? null : user.phone), normalizeText(business.website), description, ownerName || null, rooms || null, price || null, facing || null, image || null, JSON.stringify(gallery), nextStatus, user.phone, user.phone, user.phone],
     )
     response.status(201).json({ data: formatBusiness(request, rows[0]) })
   } catch (error) {
@@ -378,6 +395,7 @@ app.patch('/api/businesses/:id', async (request, response, next) => {
     const values = []
     const fieldMap = {
       name: 'name',
+      nameTe: 'name_te',
       categoryId: 'category_id',
       categoryName: 'category_name',
       address: 'address',
@@ -386,6 +404,10 @@ app.patch('/api/businesses/:id', async (request, response, next) => {
       phone: 'phone',
       website: 'website',
       description: 'description',
+      ownerName: 'owner_name',
+      rooms: 'rooms',
+      price: 'price',
+      facing: 'facing',
       image: 'image',
       gallery: 'gallery',
       status: 'status',
@@ -400,7 +422,7 @@ app.patch('/api/businesses/:id', async (request, response, next) => {
 
     if (fields.length === 0) return response.status(400).json({ error: 'No listing fields were provided for update' })
     values.push(user.phone)
-    const queryText = `UPDATE businesses SET ${fields.join(', ')}, updated_by = $${values.length}, updated_at = NOW() WHERE id = $${values.length + 1} RETURNING id, name, category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, image, gallery, status, submitted_by AS "submittedBy"`
+    const queryText = `UPDATE businesses SET ${fields.join(', ')}, updated_by = $${values.length}, updated_at = NOW() WHERE id = $${values.length + 1} RETURNING id, name, name_te AS "nameTe", category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, owner_name AS "ownerName", rooms, price, facing, image, gallery, status, submitted_by AS "submittedBy"`
     const { rows } = await query(queryText, [...values, request.params.id])
     if (!rows[0]) return response.status(404).json({ error: 'Business not found' })
     return response.json({ data: formatBusiness(request, rows[0]) })
@@ -429,7 +451,7 @@ app.get('/api/admin/businesses', async (request, response, next) => {
     await ensureSchema()
     const user = await requireAdmin(request, response)
     if (!user) return
-    const { rows } = await query('SELECT id, name, category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, image, gallery, status, submitted_by AS "submittedBy", created_at AS "createdAt", updated_at AS "updatedAt" FROM businesses ORDER BY created_at DESC')
+    const { rows } = await query('SELECT id, name, name_te AS "nameTe", category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, image, gallery, status, submitted_by AS "submittedBy", created_at AS "createdAt", updated_at AS "updatedAt" FROM businesses ORDER BY created_at DESC')
     response.json({ data: rows.map((business) => formatBusiness(request, business)) })
   } catch (error) {
     next(error)
@@ -461,7 +483,7 @@ app.delete('/api/admin/feedback/:id', async (request, response, next) => {
   }
 })
 
-app.get('/api/announcements', async (_request, response, next) => {
+app.get('/api/announcements', async (request, response, next) => {
   try {
     await ensureSchema()
     const { rows } = await query(`
@@ -479,7 +501,7 @@ app.get('/api/announcements', async (_request, response, next) => {
         AND (end_date IS NULL OR end_date >= NOW())
       ORDER BY COALESCE(start_date, NOW()) DESC
     `)
-    response.json({ data: rows })
+    response.json({ data: rows.map((row) => ({ ...row, image: publicImageUrl(request, row.image) })) })
   } catch (error) {
     next(error)
   }
