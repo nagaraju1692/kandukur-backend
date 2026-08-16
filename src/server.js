@@ -359,7 +359,7 @@ app.get('/api/businesses', async (request, response, next) => {
   try {
     await ensureSchema()
     const categoryId = typeof request.query.categoryId === 'string' ? request.query.categoryId : null
-    const statement = `SELECT id, name, name_te AS "nameTe", category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, owner_name AS "ownerName", rooms, price, facing, image, gallery, status, submitted_by AS "submittedBy" FROM businesses WHERE (status IS NULL OR status <> 'Pending review')${categoryId ? ' AND category_id = $1' : ''}`
+    const statement = `SELECT id, name, name_te AS "nameTe", category_id AS "categoryId", category_name AS "categoryName", address, latitude, longitude, phone, website, description, owner_name AS "ownerName", rooms, price, facing, image, gallery, status, submitted_by AS "submittedBy", created_at AS "createdAt" FROM businesses WHERE (status IS NULL OR status <> 'Pending review')${categoryId ? ' AND category_id = $1' : ''} ORDER BY created_at DESC`
     const { rows } = await query(statement, categoryId ? [categoryId] : [])
     response.json({ data: rows.map((business) => formatBusiness(request, business)) })
   } catch (error) {
@@ -602,6 +602,28 @@ app.post('/api/admin/uploads/business-image', async (request, response, next) =>
       }
       try {
         return await uploadAdminImage(request, response, 'businesses')
+      } catch (error) {
+        return next(error)
+      }
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/uploads/marketplace-image', async (request, response, next) => {
+  try {
+    await ensureSchema()
+    await ensureBlobContainer()
+    const user = await requireUser(request, response)
+    if (!user) return
+
+    imageUpload.single('image')(request, response, async (uploadError) => {
+      if (uploadError) {
+        return response.status(400).json({ error: uploadError.message || 'Unable to upload image' })
+      }
+      try {
+        return await uploadAdminImage(request, response, 'marketplace')
       } catch (error) {
         return next(error)
       }
