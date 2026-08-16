@@ -75,6 +75,30 @@ export function ensureSchema() {
         start_date TIMESTAMPTZ,
         end_date TIMESTAMPTZ
       );
+      CREATE TABLE IF NOT EXISTS bus_routes (
+        id TEXT PRIMARY KEY,
+        origin TEXT NOT NULL DEFAULT 'Kandukur Bus Stand',
+        destination TEXT NOT NULL,
+        destination_te TEXT,
+        destination_type TEXT NOT NULL CHECK (destination_type IN ('Village', 'City')),
+        service_type TEXT NOT NULL,
+        departure_time TIME NOT NULL,
+        days TEXT NOT NULL DEFAULT 'Daily',
+        notes TEXT,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_by TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_by TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS mandal_villages (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        distance_km INTEGER,
+        pincode TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
       CREATE TABLE IF NOT EXISTS users (
         phone TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -192,6 +216,9 @@ export function ensureSchema() {
       ALTER TABLE businesses ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
       ALTER TABLE businesses ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
       ALTER TABLE businesses ADD COLUMN IF NOT EXISTS name_te TEXT;
+      ALTER TABLE bus_routes ADD COLUMN IF NOT EXISTS destination_te TEXT;
+      ALTER TABLE bus_routes ADD COLUMN IF NOT EXISTS notes TEXT;
+      ALTER TABLE bus_routes ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
       ALTER TABLE businesses ADD COLUMN IF NOT EXISTS owner_name TEXT;
       ALTER TABLE businesses ADD COLUMN IF NOT EXISTS rooms TEXT;
       ALTER TABLE businesses ADD COLUMN IF NOT EXISTS price TEXT;
@@ -402,6 +429,109 @@ export function ensureSchema() {
           ('ev-charging-stations', 'EV Charging Stations', 'common-utilities'),
           ('public-toilets', 'Public Toilets', 'common-utilities')
         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_id = EXCLUDED.parent_id
+      `)
+      await query(`
+        INSERT INTO bus_routes (id, destination, destination_te, destination_type, service_type, departure_time, days, notes)
+        VALUES
+          ('sample-kanigiri-1', 'Kanigiri', 'కనిగిరి', 'City', 'APSRTC', '06:00'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand'),
+          ('sample-ongole-1', 'Ongole', 'ఒంగోలు', 'City', 'Express', '07:15'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand'),
+          ('sample-pamur-1', 'Pamur', 'పామూరు', 'Village', 'APSRTC', '08:30'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand'),
+          ('sample-darsi-1', 'Darsi', 'దర్శి', 'Village', 'Non-AC', '10:00'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand'),
+          ('sample-markapur-1', 'Markapur', 'మార్కాపూర్', 'City', 'Express', '13:30'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand'),
+          ('sample-nellore-1', 'Nellore', 'నెల్లూరు', 'City', 'APSRTC', '16:45'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand'),
+          ('sample-podili-1', 'Podili', 'పొదిలి', 'Village', 'Non-AC', '18:15'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand'),
+          ('sample-ongole-2', 'Ongole', 'ఒంగోలు', 'City', 'APSRTC', '11:30'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand'),
+          ('sample-guntur-1', 'Guntur', 'గుంటూరు', 'City', 'Express', '05:45'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand'),
+          ('sample-vijayawada-1', 'Vijayawada', 'విజయవాడ', 'City', 'Express', '06:30'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand'),
+          ('sample-kavali-1', 'Kavali', 'కావలి', 'City', 'APSRTC', '14:15'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand'),
+          ('sample-lingasamudram-1', 'Lingasamudram', 'లింగసముద్రం', 'Village', 'Non-AC', '07:45'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand'),
+          ('sample-ullapalem-1', 'Ullapalem', 'ఉల్లపాలెం', 'Village', 'Non-AC', '09:15'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand'),
+          ('sample-vvpalem-1', 'V. V. Palem', 'వి.వి. పాలెం', 'Village', 'APSRTC', '17:30'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-anandapuram-1', 'Anandapuram', 'ఆనందపురం', 'Village', 'Non-AC', '06:15'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-anantha-sagaram-1', 'Anantha Sagaram', 'అనంతసాగరం', 'Village', 'APSRTC', '06:45'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-donda-padu-1', 'Donda Padu', 'దొండపాడు', 'Village', 'Non-AC', '07:00'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-g-meka-padu-1', 'G. Meka Padu', 'జి. మేకపాడు', 'Village', 'APSRTC', '07:30'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-jillelamudi-1', 'Jillelamudi', 'జిల్లెలమూడి', 'Village', 'Non-AC', '08:00'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-kancharagunta-1', 'Kancharagunta', 'కంచరగుంట', 'Village', 'APSRTC', '08:15'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-kondamudusu-palem-1', 'Kondamudusu Palem', 'కొండముడుసు పాలెం', 'Village', 'Non-AC', '08:45'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-kondikandukur-1', 'Kondikandukur', 'కొండికందుకూరు', 'Village', 'APSRTC', '09:00'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-kovur-1', 'Kovur', 'కోవూరు', 'Village', 'Non-AC', '09:30'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-machavaram-1', 'Machavaram', 'మాచవరం', 'Village', 'APSRTC', '10:15'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-madanagopalapuram-1', 'Madanagopalapuram', 'మదనగోపాలపురం', 'Village', 'Non-AC', '10:45'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-mahadevapuram-1', 'Mahadevapuram', 'మహాదేవపురం', 'Village', 'APSRTC', '11:15'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-mopadu-1', 'Mopadu', 'మోపాడు', 'Village', 'Non-AC', '12:00'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-muppalakesaramvarikandrika-1', 'Muppalakesaramvarikandrika', 'ముప్పలకేసరంవారి కండ్రిక', 'Village', 'APSRTC', '12:30'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-ogur-1', 'Ogur', 'ఒగూరు', 'Village', 'APSRTC', '13:00'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-palukur-1', 'Palukur', 'పాలుకూరు', 'Village', 'Non-AC', '15:00'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-palur-1', 'Palur', 'పాలూరు', 'Village', 'APSRTC', '15:30'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+          , ('sample-pandalapadu-1', 'Pandalapadu', 'పండలపాడు', 'Village', 'Non-AC', '16:00'::TIME, 'Daily', 'Sample timing - verify at Kandukur Bus Stand')
+        ON CONFLICT (id) DO NOTHING
+      `)
+      await query(`
+        INSERT INTO mandal_villages (id, name, distance_km, pincode)
+        VALUES
+          ('anandapuram', 'Anandapuram', 4, '591539'),
+          ('anantha-sagaram', 'Anantha Sagaram', NULL, '591534'),
+          ('donda-padu', 'Donda Padu', NULL, '591544'),
+          ('g-meka-padu', 'G. Meka Padu', NULL, '591526'),
+          ('jillelamudi', 'Jillelamudi', NULL, '591529'),
+          ('kancharagunta', 'Kancharagunta', 4, '591537'),
+          ('kondamudusu-palem', 'Kondamudusu Palem', 2, '591538'),
+          ('kondikandukur', 'Kondikandukur', 5, '591532'),
+          ('kovur', 'Kovur', 6, '591533'),
+          ('machavaram', 'Machavaram', NULL, '591541'),
+          ('madanagopalapuram', 'Madanagopalapuram', NULL, '591542'),
+          ('mahadevapuram', 'Mahadevapuram', NULL, '591535'),
+          ('mopadu', 'Mopadu', NULL, '591540'),
+          ('muppalakesaramvarikandrika', 'Muppalakesaramvarikandrika', NULL, '591527'),
+          ('ogur', 'Ogur', NULL, '591536'),
+          ('palukur', 'Palukur', NULL, '591531'),
+          ('palur', 'Palur', NULL, '591543'),
+          ('pandalapadu', 'Pandalapadu', NULL, '591528'),
+          ('vikkiralapeta', 'Vikkiralapeta', NULL, '591530')
+        ON CONFLICT (name) DO UPDATE SET
+          distance_km = EXCLUDED.distance_km,
+          pincode = EXCLUDED.pincode,
+          updated_at = NOW()
+      `)
+      await query(`
+        INSERT INTO bus_routes (id, destination, destination_type, service_type, departure_time, days, notes)
+        SELECT
+          'sample-' || regexp_replace(lower(village.name), '[^a-z0-9]+', '-', 'g') || '-' || slot.sequence,
+          village.name,
+          'Village',
+          slot.service_type,
+          slot.departure_time,
+          'Daily',
+          'Sample timing - verify at Kandukur Bus Stand'
+        FROM mandal_villages AS village
+        CROSS JOIN (VALUES
+          ('2', '11:00'::TIME, 'APSRTC'),
+          ('3', '17:00'::TIME, 'Non-AC')
+        ) AS slot(sequence, departure_time, service_type)
+        ON CONFLICT (id) DO NOTHING
+      `)
+      await query(`
+        INSERT INTO bus_routes (id, destination, destination_type, service_type, departure_time, days, notes)
+        SELECT
+          'sample-' || regexp_replace(lower(village.name), '[^a-z0-9]+', '-', 'g') || '-' || slot.sequence,
+          village.name,
+          'Village',
+          slot.service_type,
+          slot.departure_time,
+          'Daily',
+          'Sample timing - verify at Kandukur Bus Stand'
+        FROM mandal_villages AS village
+        CROSS JOIN (VALUES
+          ('4', '05:30'::TIME, 'Non-AC'),
+          ('5', '07:30'::TIME, 'APSRTC'),
+          ('6', '09:30'::TIME, 'Non-AC'),
+          ('7', '12:30'::TIME, 'APSRTC'),
+          ('8', '14:30'::TIME, 'Non-AC'),
+          ('9', '16:00'::TIME, 'APSRTC'),
+          ('10', '19:00'::TIME, 'Non-AC')
+        ) AS slot(sequence, departure_time, service_type)
+        ON CONFLICT (id) DO NOTHING
       `)
     }).catch((error) => {
       schemaPromise = undefined

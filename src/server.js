@@ -295,6 +295,66 @@ app.get('/api/categories', async (_request, response, next) => {
   }
 })
 
+app.get('/api/bus-routes', async (_request, response, next) => {
+  try {
+    await ensureSchema()
+    const { rows } = await query(`
+      SELECT id, origin, destination, destination_te AS "destinationTe", destination_type AS "destinationType",
+             service_type AS "serviceType", TO_CHAR(departure_time, 'HH24:MI') AS "departureTime", days, notes
+      FROM bus_routes
+      WHERE is_active = TRUE
+      ORDER BY departure_time, destination
+    `)
+    response.json({ data: rows })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/mandal-villages', async (_request, response, next) => {
+  try {
+    await ensureSchema()
+    const { rows } = await query(`
+      SELECT id, name, distance_km AS "distanceKm", pincode
+      FROM mandal_villages
+      ORDER BY COALESCE(distance_km, 9999), name
+    `)
+    response.json({ data: rows })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/admin/bus-routes', async (request, response, next) => {
+  try {
+    await ensureSchema()
+    const user = await requireAdmin(request, response)
+    if (!user) return
+
+    const destination = normalizeText(request.body.destination)
+    const destinationTe = normalizeText(request.body.destinationTe)
+    const destinationType = request.body.destinationType === 'Village' ? 'Village' : request.body.destinationType === 'City' ? 'City' : ''
+    const serviceType = normalizeText(request.body.serviceType)
+    const departureTime = normalizeText(request.body.departureTime)
+    const days = normalizeText(request.body.days || 'Daily')
+    const notes = normalizeText(request.body.notes)
+    if (!destination || !destinationType || !serviceType || !/^([01]\d|2[0-3]):[0-5]\d$/.test(departureTime)) {
+      return response.status(400).json({ error: 'Destination, destination type, service type, and a HH:MM departure time are required' })
+    }
+
+    const { rows } = await query(
+      `INSERT INTO bus_routes (id, destination, destination_te, destination_type, service_type, departure_time, days, notes, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+       RETURNING id, origin, destination, destination_te AS "destinationTe", destination_type AS "destinationType",
+                 service_type AS "serviceType", TO_CHAR(departure_time, 'HH24:MI') AS "departureTime", days, notes`,
+      [randomUUID(), destination, destinationTe || null, destinationType, serviceType, departureTime, days, notes || null, user.phone],
+    )
+    response.status(201).json({ data: rows[0] })
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.get('/api/businesses', async (request, response, next) => {
   try {
     await ensureSchema()
