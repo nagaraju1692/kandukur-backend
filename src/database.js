@@ -533,6 +533,64 @@ export function ensureSchema() {
         ) AS slot(sequence, departure_time, service_type)
         ON CONFLICT (id) DO NOTHING
       `)
+
+      await query(`
+        INSERT INTO categories (id, name, parent_id)
+        VALUES
+          ('shops-local-businesses', 'Shops & Local Businesses', NULL),
+          ('home-technical-services', 'Home & Technical Services', NULL),
+          ('government-public-services', 'Government & Public Services', NULL),
+          ('education-training', 'Education & Training', NULL),
+          ('travel-transport', 'Travel & Transport', NULL),
+          ('religious-miscellaneous', 'Religious & Miscellaneous', NULL),
+          ('tourism-attractions', 'Tourism & Attractions', NULL),
+          ('finance-utilities', 'Finance & Utilities', NULL)
+        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_id = EXCLUDED.parent_id
+      `)
+
+      await query(`
+        INSERT INTO categories (id, name, parent_id)
+        VALUES
+          ('book-stores', 'Book Stores', 'shops-local-businesses'),
+          ('photo-studios', 'Photo Studios', 'shops-local-businesses'),
+          ('courier-services', 'Courier Services', 'shops-local-businesses'),
+          ('kids-toys-cycles', 'Kids Toys & Cycles', 'shops-local-businesses'),
+          ('vehicle-battery-shops', 'Vehicle Battery Shops', 'shops-local-businesses'),
+          ('key-lock-repair', 'Key & Lock Repair', 'shops-local-businesses'),
+          ('painting-hardware', 'Painting & Hardware', 'shops-local-businesses'),
+          ('dry-fruit-stores', 'Dry Fruit Stores', 'shops-local-businesses'),
+          ('mobile-accessories', 'Mobile & Accessories', 'shops-local-businesses'),
+          ('fireworks-crackers', 'Fireworks & Crackers', 'shops-local-businesses'),
+          ('iron-grill-suppliers', 'Iron & Grill Suppliers', 'shops-local-businesses'),
+          ('clothing-tailors', 'Clothing & Tailors', 'shops-local-businesses'),
+          ('carpentry-services', 'Carpentry Services', 'home-technical-services'),
+          ('ac-services', 'AC Services', 'home-technical-services'),
+          ('washing-machine-repair', 'Washing Machine Repair', 'home-technical-services'),
+          ('event-caterers', 'Event Caterers', 'home-technical-services'),
+          ('wifi-internet-services', 'WiFi & Internet Services', 'home-technical-services'),
+          ('tractor-mechanics', 'Tractor Mechanics', 'home-technical-services'),
+          ('meeseva-centers', 'MeeSeva Centers', 'government-public-services'),
+          ('aadhaar-centers', 'Aadhaar Centers', 'government-public-services'),
+          ('sachivalayams', 'Sachivalayams', 'government-public-services'),
+          ('court-legal-services', 'Court & Legal Services', 'government-public-services'),
+          ('electricity-water-offices', 'Electricity & Water Offices', 'government-public-services'),
+          ('sports-coaching', 'Sports Coaching', 'education-training'),
+          ('tuition-centers', 'Tuition Centers', 'education-training'),
+          ('dance-academies', 'Dance Academies', 'education-training'),
+          ('apsrtc-bus-stand', 'APSRTC Bus Stand', 'travel-transport'),
+          ('private-travels', 'Private Travels', 'travel-transport'),
+          ('railway-station', 'Railway Station', 'travel-transport'),
+          ('priests-poojaris', 'Priests & Poojaris', 'religious-miscellaneous'),
+          ('swimming-pools', 'Swimming Pools', 'religious-miscellaneous'),
+          ('other-services', 'Other Services', 'religious-miscellaneous'),
+          ('ramayapatnam-beach', 'Ramayapatnam Beach', 'tourism-attractions'),
+          ('pakala-lake', 'Pakala Lake', 'tourism-attractions'),
+          ('etha-mokkala', 'Etha Mokkala', 'tourism-attractions'),
+          ('chirala-beach', 'Chirala Beach', 'tourism-attractions'),
+          ('banks-atms', 'Banks & ATMs', 'finance-utilities'),
+          ('insurance-offices', 'Insurance Offices', 'finance-utilities')
+        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_id = EXCLUDED.parent_id
+      `)
     }).catch((error) => {
       schemaPromise = undefined
       throw error
