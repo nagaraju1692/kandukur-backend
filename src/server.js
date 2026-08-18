@@ -284,6 +284,24 @@ app.post('/api/feedback', async (request, response, next) => {
     next(error)
   }
 })
+app.get('/api/feedback/mine', async (request, response, next) => {
+  try {
+    await ensureSchema()
+    const user = await requireUser(request, response)
+    if (!user) return
+    const { rows } = await query(`
+      SELECT id, type, subject, contact, message,
+             admin_reply AS "adminReply", replied_at AS "repliedAt",
+             created_at AS "createdAt"
+      FROM feedback_submissions
+      WHERE user_phone = $1
+      ORDER BY created_at DESC
+    `, [user.phone])
+    response.json({ data: rows })
+  } catch (error) {
+    next(error)
+  }
+})
 
 app.get('/api/categories', async (_request, response, next) => {
   try {
@@ -523,8 +541,28 @@ app.get('/api/admin/feedback', async (request, response, next) => {
     await ensureSchema()
     const user = await requireAdmin(request, response)
     if (!user) return
-    const { rows } = await query('SELECT id, user_phone AS "userPhone", type, subject, contact, message, created_at AS "createdAt" FROM feedback_submissions ORDER BY created_at DESC')
+    const { rows } = await query('SELECT id, user_phone AS "userPhone", type, subject, contact, message, admin_reply AS "adminReply", replied_at AS "repliedAt", created_at AS "createdAt" FROM feedback_submissions ORDER BY created_at DESC')
     response.json({ data: rows })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.patch('/api/admin/feedback/:id/reply', async (request, response, next) => {
+  try {
+    await ensureSchema()
+    const user = await requireAdmin(request, response)
+    if (!user) return
+    const reply = typeof request.body.reply === 'string' ? request.body.reply.trim() : ''
+    if (!reply) return response.status(400).json({ error: 'Reply is required' })
+    const { rows } = await query(`
+      UPDATE feedback_submissions
+      SET admin_reply = $1, replied_at = NOW(), updated_by = $2, updated_at = NOW()
+      WHERE id = $3
+      RETURNING id, user_phone AS "userPhone", type, subject, contact, message, admin_reply AS "adminReply", replied_at AS "repliedAt", created_at AS "createdAt"
+    `, [reply, user.phone, request.params.id])
+    if (!rows[0]) return response.status(404).json({ error: 'Feedback not found' })
+    response.json({ data: rows[0] })
   } catch (error) {
     next(error)
   }

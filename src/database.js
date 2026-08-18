@@ -139,6 +139,8 @@ export function ensureSchema() {
         updated_by TEXT NOT NULL REFERENCES users(phone),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      ALTER TABLE feedback_submissions ADD COLUMN IF NOT EXISTS admin_reply TEXT;
+      ALTER TABLE feedback_submissions ADD COLUMN IF NOT EXISTS replied_at TIMESTAMPTZ;
       CREATE TABLE IF NOT EXISTS app_usage (
         id TEXT PRIMARY KEY,
         user_phone TEXT REFERENCES users(phone) ON DELETE SET NULL,
