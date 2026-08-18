@@ -602,8 +602,18 @@ export function ensureSchema() {
       `)
 
       await query(`
+        UPDATE categories
+        SET parent_id = 'health'
+        WHERE parent_id IN (
+          SELECT id FROM categories
+          WHERE name IN ('Hospitals', 'Hospitals & Clinics', 'Medical shops', 'Medical Shops', 'Diagnostic Labs', 'Diagnostic Lab Centers', 'Diagnosis Labs', 'Radiology Scans', 'Radiology Scan Centers', 'Scan Centers')
+            AND id NOT IN ('hospitals-clinics', 'medical-shops', 'diagnostic-lab-centers', 'radiology-scan-centers')
+        )
+      `)
+
+      await query(`
         DELETE FROM categories
-        WHERE name IN ('Hospitals', 'Medical shops', 'Diagnostic Labs', 'Diagnosis Labs', 'Radiology Scans', 'Scan Centers')
+        WHERE name IN ('Hospitals', 'Hospitals & Clinics', 'Medical shops', 'Medical Shops', 'Diagnostic Labs', 'Diagnostic Lab Centers', 'Diagnosis Labs', 'Radiology Scans', 'Radiology Scan Centers', 'Scan Centers')
           AND id NOT IN ('hospitals-clinics', 'medical-shops', 'diagnostic-lab-centers', 'radiology-scan-centers')
       `)
 
@@ -651,6 +661,64 @@ export function ensureSchema() {
         UPDATE businesses
         SET category_name = 'Restaurants & Hotels'
         WHERE category_name IN ('Restaurants', 'Restarent & Hotals', 'Restaurants & Hotals')
+      `)
+
+      await query(`
+        WITH category_usage AS (
+          SELECT c.id, c.name, COUNT(b.id)::INTEGER AS listing_count
+          FROM categories c
+          LEFT JOIN businesses b ON b.category_id = c.id
+          WHERE c.name IN ('Restaurants & Hotels', 'Education & Institutions')
+          GROUP BY c.id, c.name
+        ), canonical AS (
+          SELECT DISTINCT ON (name) name, id
+          FROM category_usage
+          ORDER BY name, listing_count DESC, id
+        )
+        UPDATE businesses b
+        SET category_id = canonical.id, category_name = canonical.name, updated_at = NOW()
+        FROM category_usage duplicate
+        JOIN canonical ON canonical.name = duplicate.name
+        WHERE b.category_id = duplicate.id
+          AND duplicate.id <> canonical.id
+      `)
+
+      await query(`
+        WITH category_usage AS (
+          SELECT c.id, c.name, COUNT(b.id)::INTEGER AS listing_count
+          FROM categories c
+          LEFT JOIN businesses b ON b.category_id = c.id
+          WHERE c.name IN ('Restaurants & Hotels', 'Education & Institutions')
+          GROUP BY c.id, c.name
+        ), canonical AS (
+          SELECT DISTINCT ON (name) name, id
+          FROM category_usage
+          ORDER BY name, listing_count DESC, id
+        )
+        UPDATE categories child
+        SET parent_id = canonical.id
+        FROM canonical, categories duplicate
+        WHERE child.parent_id = duplicate.id
+          AND duplicate.name = canonical.name
+          AND duplicate.id <> canonical.id
+      `)
+
+      await query(`
+        WITH category_usage AS (
+          SELECT c.id, c.name, COUNT(b.id)::INTEGER AS listing_count
+          FROM categories c
+          LEFT JOIN businesses b ON b.category_id = c.id
+          WHERE c.name IN ('Restaurants & Hotels', 'Education & Institutions')
+          GROUP BY c.id, c.name
+        ), canonical AS (
+          SELECT DISTINCT ON (name) name, id
+          FROM category_usage
+          ORDER BY name, listing_count DESC, id
+        )
+        DELETE FROM categories duplicate
+        USING canonical
+        WHERE duplicate.name = canonical.name
+          AND duplicate.id <> canonical.id
       `)
 
       await query(`
@@ -730,6 +798,12 @@ export function ensureSchema() {
       `)
 
       await query(`
+        UPDATE categories
+        SET parent_id = 'tourism-attractions'
+        WHERE parent_id IN (SELECT id FROM categories WHERE name = 'Tourist Places')
+      `)
+
+      await query(`
         DELETE FROM categories
         WHERE name = 'Tourist Places'
       `)
@@ -739,6 +813,13 @@ export function ensureSchema() {
         SET image = 'https://images.unsplash.com/photo-1548013146-72479768bada?auto=format&fit=crop&w=1200&q=80', updated_at = NOW()
         WHERE category_name = 'Temples'
            OR category_id IN (SELECT id FROM categories WHERE name = 'Temples')
+      `)
+
+      await query(`
+        UPDATE businesses
+        SET image = 'https://images.unsplash.com/photo-1587854692152-cbe660dbde88?auto=format&fit=crop&w=1200&q=80', updated_at = NOW()
+        WHERE category_name IN ('Medical shops', 'Medical Shops')
+           OR category_id IN (SELECT id FROM categories WHERE name IN ('Medical shops', 'Medical Shops'))
       `)
 
       await query(`
