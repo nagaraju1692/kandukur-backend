@@ -816,10 +816,25 @@ export function ensureSchema() {
       `)
 
       await query(`
+        WITH medical_listings AS (
+          SELECT id,
+                 ROW_NUMBER() OVER (ORDER BY id) AS row_number
+          FROM businesses
+          WHERE category_name IN ('Medical shops', 'Medical Shops')
+             OR category_id IN (SELECT id FROM categories WHERE name IN ('Medical shops', 'Medical Shops'))
+        )
         UPDATE businesses
-        SET image = 'https://images.unsplash.com/photo-1587854692152-cbe660dbde88?auto=format&fit=crop&w=1200&q=80', updated_at = NOW()
-        WHERE category_name IN ('Medical shops', 'Medical Shops')
-           OR category_id IN (SELECT id FROM categories WHERE name IN ('Medical shops', 'Medical Shops'))
+        SET image = (ARRAY[
+          'https://images.unsplash.com/photo-1587854692152-cbe660dbde88?auto=format&fit=crop&w=1200&q=80',
+          'https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&w=1200&q=80',
+          'https://images.unsplash.com/photo-1585435557343-3b092031a831?auto=format&fit=crop&w=1200&q=80',
+          'https://images.unsplash.com/photo-1471864190281-a93a3070b6de?auto=format&fit=crop&w=1200&q=80',
+          'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&w=1200&q=80',
+          'https://images.unsplash.com/photo-1576602976047-174e57a47881?auto=format&fit=crop&w=1200&q=80'
+        ])[((medical_listings.row_number - 1) % 6) + 1],
+        updated_at = NOW()
+        FROM medical_listings
+        WHERE businesses.id = medical_listings.id
       `)
 
       await query(`

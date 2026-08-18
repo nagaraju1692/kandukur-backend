@@ -554,6 +554,7 @@ app.get('/api/announcements', async (request, response, next) => {
         description,
         type,
         image,
+        created_at AS "createdAt",
         start_date AS "startDate",
         end_date AS "endDate"
       FROM announcements
