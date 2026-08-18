@@ -537,15 +537,132 @@ export function ensureSchema() {
       await query(`
         INSERT INTO categories (id, name, parent_id)
         VALUES
+          ('emergency', 'Emergency', NULL),
+          ('police-station', 'Police Station', 'emergency'),
+          ('emergency-108', '108 Emergency', 'emergency'),
+          ('fire-station', 'Fire Station', 'emergency')
+        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_id = EXCLUDED.parent_id
+      `)
+
+      await query(`
+        UPDATE businesses
+        SET category_id = CASE
+              WHEN category_name IN ('Police station', 'Police Station') OR category_id IN (SELECT id FROM categories WHERE name IN ('Police station', 'Police Station')) THEN 'police-station'
+              WHEN category_name IN ('108', '108 Emergency', '108 Ambulance') OR category_id IN (SELECT id FROM categories WHERE name IN ('108', '108 Emergency', '108 Ambulance')) THEN 'emergency-108'
+              WHEN category_name IN ('Fire station', 'Fire Station') OR category_id IN (SELECT id FROM categories WHERE name IN ('Fire station', 'Fire Station')) THEN 'fire-station'
+              ELSE category_id
+            END,
+            category_name = CASE
+              WHEN category_name IN ('Police station', 'Police Station') OR category_id IN (SELECT id FROM categories WHERE name IN ('Police station', 'Police Station')) THEN 'Police Station'
+              WHEN category_name IN ('108', '108 Emergency', '108 Ambulance') OR category_id IN (SELECT id FROM categories WHERE name IN ('108', '108 Emergency', '108 Ambulance')) THEN '108 Emergency'
+              WHEN category_name IN ('Fire station', 'Fire Station') OR category_id IN (SELECT id FROM categories WHERE name IN ('Fire station', 'Fire Station')) THEN 'Fire Station'
+              ELSE category_name
+            END,
+            updated_at = NOW()
+        WHERE category_name IN ('Police station', 'Police Station', '108', '108 Emergency', '108 Ambulance', 'Fire station', 'Fire Station')
+           OR category_id IN (SELECT id FROM categories WHERE name IN ('Police station', 'Police Station', '108', '108 Emergency', '108 Ambulance', 'Fire station', 'Fire Station'))
+      `)
+
+      await query(`
+        DELETE FROM categories
+        WHERE name IN ('Police station', '108', '108 Ambulance', 'Fire station')
+          AND id NOT IN ('police-station', 'emergency-108', 'fire-station')
+      `)
+
+      await query(`
+        INSERT INTO categories (id, name, parent_id)
+        VALUES
+          ('health', 'Health', NULL),
+          ('hospitals-clinics', 'Hospitals & Clinics', 'health'),
+          ('medical-shops', 'Medical Shops', 'health'),
+          ('diagnostic-lab-centers', 'Diagnostic Lab Centers', 'health'),
+          ('radiology-scan-centers', 'Radiology Scan Centers', 'health')
+        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_id = EXCLUDED.parent_id
+      `)
+
+      await query(`
+        UPDATE businesses
+        SET category_id = CASE
+              WHEN category_name IN ('Hospitals', 'Hospitals & Clinics') OR category_id IN (SELECT id FROM categories WHERE name IN ('Hospitals', 'Hospitals & Clinics')) THEN 'hospitals-clinics'
+              WHEN category_name IN ('Medical shops', 'Medical Shops') OR category_id IN (SELECT id FROM categories WHERE name IN ('Medical shops', 'Medical Shops')) THEN 'medical-shops'
+              WHEN category_name IN ('Diagnostic Labs', 'Diagnostic Lab Centers', 'Diagnosis Labs') OR category_id IN (SELECT id FROM categories WHERE name IN ('Diagnostic Labs', 'Diagnostic Lab Centers', 'Diagnosis Labs')) THEN 'diagnostic-lab-centers'
+              WHEN category_name IN ('Radiology Scans', 'Radiology Scan Centers', 'Scan Centers') OR category_id IN (SELECT id FROM categories WHERE name IN ('Radiology Scans', 'Radiology Scan Centers', 'Scan Centers')) THEN 'radiology-scan-centers'
+              ELSE category_id
+            END,
+            category_name = CASE
+              WHEN category_name IN ('Hospitals', 'Hospitals & Clinics') OR category_id IN (SELECT id FROM categories WHERE name IN ('Hospitals', 'Hospitals & Clinics')) THEN 'Hospitals & Clinics'
+              WHEN category_name IN ('Medical shops', 'Medical Shops') OR category_id IN (SELECT id FROM categories WHERE name IN ('Medical shops', 'Medical Shops')) THEN 'Medical Shops'
+              WHEN category_name IN ('Diagnostic Labs', 'Diagnostic Lab Centers', 'Diagnosis Labs') OR category_id IN (SELECT id FROM categories WHERE name IN ('Diagnostic Labs', 'Diagnostic Lab Centers', 'Diagnosis Labs')) THEN 'Diagnostic Lab Centers'
+              WHEN category_name IN ('Radiology Scans', 'Radiology Scan Centers', 'Scan Centers') OR category_id IN (SELECT id FROM categories WHERE name IN ('Radiology Scans', 'Radiology Scan Centers', 'Scan Centers')) THEN 'Radiology Scan Centers'
+              ELSE category_name
+            END,
+            updated_at = NOW()
+        WHERE category_name IN ('Hospitals', 'Hospitals & Clinics', 'Medical shops', 'Medical Shops', 'Diagnostic Labs', 'Diagnostic Lab Centers', 'Diagnosis Labs', 'Radiology Scans', 'Radiology Scan Centers', 'Scan Centers')
+           OR category_id IN (SELECT id FROM categories WHERE name IN ('Hospitals', 'Hospitals & Clinics', 'Medical shops', 'Medical Shops', 'Diagnostic Labs', 'Diagnostic Lab Centers', 'Diagnosis Labs', 'Radiology Scans', 'Radiology Scan Centers', 'Scan Centers'))
+      `)
+
+      await query(`
+        DELETE FROM categories
+        WHERE name IN ('Hospitals', 'Medical shops', 'Diagnostic Labs', 'Diagnosis Labs', 'Radiology Scans', 'Scan Centers')
+          AND id NOT IN ('hospitals-clinics', 'medical-shops', 'diagnostic-lab-centers', 'radiology-scan-centers')
+      `)
+
+      await query(`
+        INSERT INTO categories (id, name, parent_id)
+        VALUES
           ('shops-local-businesses', 'Shops & Local Businesses', NULL),
           ('home-technical-services', 'Home & Technical Services', NULL),
           ('government-public-services', 'Government & Public Services', NULL),
-          ('education-training', 'Education & Training', NULL),
+          ('education-training', 'Education & Sports Training Centers', NULL),
+          ('education-institutions', 'Education & Institutions', NULL),
           ('travel-transport', 'Travel & Transport', NULL),
           ('religious-miscellaneous', 'Religious & Miscellaneous', NULL),
           ('tourism-attractions', 'Tourism & Attractions', NULL),
-          ('finance-utilities', 'Finance & Utilities', NULL)
+          ('finance-utilities', 'Finance & Utilities', NULL),
+          ('restaurants-hotels', 'Restaurants & Hotels', NULL)
         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_id = EXCLUDED.parent_id
+      `)
+
+      await query(`
+        UPDATE businesses
+        SET category_name = 'Education & Sports Training Centers'
+        WHERE category_name = 'Education & Training'
+      `)
+
+      await query(`
+        UPDATE categories
+        SET name = 'Education & Institutions'
+        WHERE name = 'Education'
+      `)
+
+      await query(`
+        UPDATE categories
+        SET name = 'Restaurants & Hotels'
+        WHERE name IN ('Restaurants', 'Restarent & Hotals', 'Restaurants & Hotals')
+      `)
+
+      await query(`
+        UPDATE businesses
+        SET category_name = 'Education & Institutions'
+        WHERE category_name = 'Education'
+      `)
+
+      await query(`
+        UPDATE businesses
+        SET category_name = 'Restaurants & Hotels'
+        WHERE category_name IN ('Restaurants', 'Restarent & Hotals', 'Restaurants & Hotals')
+      `)
+
+      await query(`
+        UPDATE categories
+        SET name = 'Hospitals & Clinics'
+        WHERE name IN ('Hospitals', 'Hospitals & clincs', 'Hospitals & Clincs')
+      `)
+
+      await query(`
+        UPDATE businesses
+        SET category_name = 'Hospitals & Clinics'
+        WHERE category_name IN ('Hospitals', 'Hospitals & clincs', 'Hospitals & Clincs')
       `)
 
       await query(`
@@ -590,6 +707,53 @@ export function ensureSchema() {
           ('banks-atms', 'Banks & ATMs', 'finance-utilities'),
           ('insurance-offices', 'Insurance Offices', 'finance-utilities')
         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_id = EXCLUDED.parent_id
+      `)
+
+      await query(`
+        UPDATE businesses
+        SET category_id = 'apsrtc-bus-stand', category_name = 'APSRTC Bus Stand', updated_at = NOW()
+        WHERE category_name IN ('Bus stand', 'APSRTC Bus Stand')
+           OR category_id IN (SELECT id FROM categories WHERE name IN ('Bus stand', 'APSRTC Bus Stand'))
+      `)
+
+      await query(`
+        DELETE FROM categories
+        WHERE name = 'Bus stand'
+           OR id = 'bus-stand'
+      `)
+
+      await query(`
+        UPDATE businesses
+        SET category_id = 'tourism-attractions', category_name = 'Tourism & Attractions', updated_at = NOW()
+        WHERE category_name = 'Tourist Places'
+           OR category_id IN (SELECT id FROM categories WHERE name = 'Tourist Places')
+      `)
+
+      await query(`
+        DELETE FROM categories
+        WHERE name = 'Tourist Places'
+      `)
+
+      await query(`
+        UPDATE businesses
+        SET image = 'https://images.unsplash.com/photo-1548013146-72479768bada?auto=format&fit=crop&w=1200&q=80', updated_at = NOW()
+        WHERE category_name = 'Temples'
+           OR category_id IN (SELECT id FROM categories WHERE name = 'Temples')
+      `)
+
+      await query(`
+        UPDATE businesses
+        SET image = CASE category_id
+              WHEN 'ac-services' THEN 'https://images.unsplash.com/photo-1585771724684-38269d6639fd?auto=format&fit=crop&w=1200&q=80'
+              WHEN 'carpentry-services' THEN 'https://images.unsplash.com/photo-1452132212556-81eb2172a06a?auto=format&fit=crop&w=1200&q=80'
+              WHEN 'event-caterers' THEN 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=1200&q=80'
+              WHEN 'tractor-mechanics' THEN 'https://images.unsplash.com/photo-1581092918056-0c4c3acd3789?auto=format&fit=crop&w=1200&q=80'
+              WHEN 'washing-machine-repair' THEN 'https://images.unsplash.com/photo-1585810274998-91a10b5e4971?auto=format&fit=crop&w=1200&q=80'
+              WHEN 'wifi-internet-services' THEN 'https://images.unsplash.com/photo-1563089145-fc3ab8b33fda?auto=format&fit=crop&w=1200&q=80'
+              ELSE image
+            END,
+            updated_at = NOW()
+        WHERE category_id IN ('ac-services', 'carpentry-services', 'event-caterers', 'tractor-mechanics', 'washing-machine-repair', 'wifi-internet-services')
       `)
     }).catch((error) => {
       schemaPromise = undefined
