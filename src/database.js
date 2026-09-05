@@ -166,9 +166,11 @@ export function ensureSchema() {
       );
       CREATE UNIQUE INDEX IF NOT EXISTS app_usage_device_id_unique
         ON app_usage(device_id);
-      ALTER TABLE app_usage ADD COLUMN IF NOT EXISTS user_name TEXT;
+            ALTER TABLE app_usage ADD COLUMN IF NOT EXISTS user_name TEXT;
       ALTER TABLE app_usage ADD COLUMN IF NOT EXISTS app_version TEXT;
       ALTER TABLE app_usage ADD COLUMN IF NOT EXISTS platform TEXT;
+      ALTER TABLE app_usage ADD COLUMN IF NOT EXISTS device_name TEXT;
+      ALTER TABLE app_usage ADD COLUMN IF NOT EXISTS location TEXT;
       ALTER TABLE app_usage ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
       ALTER TABLE categories ADD COLUMN IF NOT EXISTS created_by TEXT;
       ALTER TABLE categories ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();

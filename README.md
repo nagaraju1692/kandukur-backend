@@ -23,3 +23,12 @@ Store image and gallery values as public HTTPS URLs. The API uses `categories`, 
 ```json
 { "id": "announcement-1", "title": "", "detail": "", "description": "", "type": "Movie", "image": "https://..." }
 ```
+
+Cricket integration uses Cricwix through the backend. Set `CRICWIX_API_KEY` in the backend environment; do not expose it as an Expo/mobile variable. The mobile app uses these routes:
+
+- `GET /api/cricket/matches` returns normalized live, yesterday, today, and upcoming matches. Optional `from` and `to` query parameters use `YYYY-MM-DD` and are limited to a 31-day range.
+- `GET /api/cricket/matches/:id` returns normalized match details with live data and the provider scorecard when available.
+- `GET /api/cricket/live/:id` returns Cricwix live match details and ball-by-ball data.
+- `GET /api/cricket/scorecards/:id` returns the Cricwix match scorecard.
+
+The response metadata reports whether Cricwix returned live ball-by-ball data. The Cricwix API key is only used by the backend.

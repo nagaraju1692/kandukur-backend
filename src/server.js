@@ -54,6 +54,120 @@ function publicImageUrl(request, image) {
   return `${request.protocol}://${request.get('host')}${image}`
 }
 
+const cricketProviderBaseUrl = 'https://api.cricwix.com/ext/v1'
+
+function cricketProviderUrl(path, params = {}) {
+  const apiKey = normalizeText(process.env.CRICWIX_API_KEY)
+  if (!apiKey) throw new Error('Cricket provider is not configured')
+  const url = new URL(`${cricketProviderBaseUrl}${path}`)
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value))
+  })
+  return { url: url.toString(), apiKey }
+}
+
+async function fetchCricketProvider(path, params = {}) {
+  const { url, apiKey } = cricketProviderUrl(path, params)
+  const providerResponse = await fetch(url, {
+    headers: { Accept: 'application/json', 'x-api-key': apiKey },
+  })
+  if (!providerResponse.ok) throw new Error(`Cricket provider request failed with ${providerResponse.status}`)
+  const payload = await providerResponse.json()
+  if (payload?.success === false) throw new Error(payload.message || 'Cricket provider rejected the request')
+  return payload?.data
+}
+
+function cricketDate(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return new Date(value < 10000000000 ? value * 1000 : value)
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed
+}
+
+function cricketTimestamp(match) {
+  for (const value of [match.scheduled_start, match.dateTimeGMT, match.dateTime, match.startTime, match.start_time, match.date, match.timestamp]) {
+    const parsed = cricketDate(value)
+    if (parsed) return parsed.getTime()
+  }
+  return undefined
+}
+
+function parseTeamScore(scoreObj, fallbackName) {
+  if (scoreObj?.r != null) {
+    return `${scoreObj.r}/${scoreObj.w ?? 0}`
+  }
+  if (typeof scoreObj === 'string') {
+    if (/^(ns|na|n\/a|not started|scheduled)$/i.test(scoreObj.trim())) {
+      return undefined
+    }
+    return scoreObj.trim()
+  }
+  return undefined
+}
+
+function normalizeCricketMatch(match, index = 0) {
+  const team1 = match.home_team || match.localteam || match.teamInfo?.[0] || {}
+  const team2 = match.away_team || match.visitorteam || match.teamInfo?.[1] || {}
+  const scores = Array.isArray(match.score) ? match.score : []
+  const homeScore = team1.score || scores[0] || {}
+  const awayScore = team2.score || scores[1] || {}
+  const timestamp = cricketTimestamp(match)
+  let status = normalizeText(match.status || match.fixture_status || match.note, match.is_live ? 'Live' : 'Upcoming')
+  let lowerStatus = status.toLowerCase()
+  if (lowerStatus === 'ns' || lowerStatus === 'scheduled' || /^ns$/i.test(status)) {
+    status = 'Upcoming'
+    lowerStatus = 'upcoming'
+  }
+  const completed = Boolean(match.matchEnded) || /completed|finished|won by|tied|draw|no result|abandoned|cancelled|canceled|match ended/.test(lowerStatus)
+  const live = !completed && (Boolean(match.is_live || match.matchStarted) || /live|in progress|innings break|stumps|day \d/.test(lowerStatus))
+  const now = new Date()
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const tomorrowStart = todayStart + 86400000
+  const yesterdayStart = todayStart - 86400000
+  const dayLabel = timestamp === undefined ? undefined : timestamp < todayStart ? 'yesterday' : timestamp < tomorrowStart ? 'today' : 'upcoming'
+  const innings = scores.map((score, scoreIndex) => ({
+    team: score?.inning || (scoreIndex === 0 ? team1.name : team2.name) || `Innings ${scoreIndex + 1}`,
+    score: score?.r != null ? `${score.r}/${score.w ?? 0}` : '—',
+    overs: score?.o != null ? String(score.o) : '—',
+    runRate: score?.rr != null ? String(score.rr) : undefined,
+  }))
+  return {
+    id: String(match.fixture_id || match.id || `cric-${index}`),
+    state: live ? 'live' : completed ? 'completed' : 'upcoming',
+    dayLabel,
+    title: match.name || `${team1.team_name || team1.name || 'Team 1'} vs ${team2.team_name || team2.name || 'Team 2'}`,
+    series: match.league?.name || match.league || match.seriesName || match.matchType?.toUpperCase() || 'Cricket Match',
+    matchType: match.match_type?.toUpperCase() || match.matchType?.toUpperCase() || 'CRICKET',
+    status,
+    venue: match.venue?.name || match.venue || 'Cricket Stadium',
+    isLive: live,
+    matchNumber: match.matchNumber || match.matchNo || undefined,
+    group: match.group || match.stage || undefined,
+    dateTime: timestamp ? new Date(timestamp).toISOString() : match.scheduled_start,
+    playerOfMatch: match.player_of_the_match || match.playerOfMatch || undefined,
+    cricbuzzUrl: 'https://m.cricbuzz.com/cricket-match/live-scores',
+    team1: { name: team1.team_name || team1.name || 'Team 1', shortName: team1.short_code || team1.code || team1.shortname || 'T1', flag: team1.image || team1.img, score: parseTeamScore(homeScore), overs: homeScore.o != null ? `${homeScore.o} ov` : undefined },
+    team2: { name: team2.team_name || team2.name || 'Team 2', shortName: team2.short_code || team2.code || team2.shortname || 'T2', flag: team2.image || team2.img, score: parseTeamScore(awayScore), overs: awayScore.o != null ? `${awayScore.o} ov` : undefined },
+    summary: status,
+    innings,
+    commentary: [],
+    _timestamp: timestamp,
+    _keep: live || timestamp === undefined || timestamp >= yesterdayStart,
+  }
+}
+
+function isRequestedCricketFormat(match) {
+  const format = `${match.series || ''} ${match.matchType || ''}`.toLowerCase()
+  return format.includes('test')
+    || format.includes('one day international')
+    || format.includes('twenty20 international')
+}
+
+function stripCricketMeta(match) {
+  const { _timestamp, _keep, ...publicMatch } = match
+  return publicMatch
+}
+
 function formatBusiness(request, business) {
   return {
     ...business,
@@ -143,6 +257,162 @@ async function requireAdmin(request, response) {
 }
 
 app.get('/health', (_request, response) => response.json({ status: 'ok' }))
+
+let cricketMatchesCache = { timestamp: 0, data: null, meta: null }
+
+app.get('/api/cricket/matches', async (request, response, next) => {
+  try {
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/
+    const from = normalizeText(request.query.from)
+    const to = normalizeText(request.query.to)
+    if ((from && !datePattern.test(from)) || (to && !datePattern.test(to))) return response.status(400).json({ error: 'from and to must use YYYY-MM-DD format' })
+    const fromTime = from ? new Date(`${from}T00:00:00`).getTime() : undefined
+    const toTime = to ? new Date(`${to}T23:59:59.999`).getTime() : undefined
+    if ((fromTime !== undefined && Number.isNaN(fromTime)) || (toTime !== undefined && Number.isNaN(toTime))) return response.status(400).json({ error: 'Invalid cricket date range' })
+    if (fromTime !== undefined && toTime !== undefined && (toTime < fromTime || toTime - fromTime > 31 * 86400000)) return response.status(400).json({ error: 'Cricket date range must be 0 to 31 days' })
+
+    const forceRefresh = request.query.forceRefresh === 'true' || request.query.forceRefresh === '1' || request.query.forceRefresh === true
+    const isCacheValid = cricketMatchesCache.data && (Date.now() - cricketMatchesCache.timestamp < 24 * 60 * 60 * 1000)
+
+    if (isCacheValid && !forceRefresh) {
+      let cachedMatches = cricketMatchesCache.data
+      if (fromTime !== undefined || toTime !== undefined) {
+        cachedMatches = cachedMatches.filter((match) => {
+          const time = match.dateTime ? new Date(match.dateTime).getTime() : undefined
+          if (fromTime !== undefined && (time === undefined || time < fromTime)) return false
+          if (toTime !== undefined && (time === undefined || time > toTime)) return false
+          return true
+        })
+      }
+      return response.json({
+        data: cachedMatches,
+        meta: cricketMatchesCache.meta,
+      })
+    }
+
+    try {
+      const providerResults = await Promise.allSettled([
+        fetchCricketProvider('/fixtures', { status: 'live' }),
+        fetchCricketProvider('/fixtures', { status: 'upcoming', limit: 100 }),
+      ])
+      if (providerResults.every((result) => result.status === 'rejected')) throw providerResults[0].reason
+      const livePayload = providerResults[0].status === 'fulfilled' ? providerResults[0].value : {}
+      const upcomingPayload = providerResults[1].status === 'fulfilled' ? providerResults[1].value : {}
+      const currentMatches = Array.isArray(livePayload?.fixtures) ? livePayload.fixtures : []
+      const scheduledMatches = Array.isArray(upcomingPayload?.fixtures) ? upcomingPayload.fixtures : []
+      const seen = new Set()
+      const seenUpcomingTeamPairs = new Set()
+      const matches = [...currentMatches, ...scheduledMatches]
+        .map((match, index) => normalizeCricketMatch(match, index))
+        .filter((match) => {
+          if (!isRequestedCricketFormat(match)) return false
+          if (seen.has(match.id) || !match._keep) return false
+          seen.add(match.id)
+          return true
+        })
+        .sort((left, right) => Number(right.isLive) - Number(left.isLive) || (left._timestamp ?? 0) - (right._timestamp ?? 0))
+        .filter((match) => {
+          if (match.state === 'upcoming' || !match.isLive) {
+            const teamPairKey = [match.team1?.name, match.team2?.name]
+              .map((n) => (n || '').toLowerCase().trim())
+              .sort()
+              .join(' vs ')
+            if (seenUpcomingTeamPairs.has(teamPairKey)) {
+              return false
+            }
+            seenUpcomingTeamPairs.add(teamPairKey)
+          }
+          return true
+        })
+        .slice(0, 50)
+
+      const publicMatches = matches.map(stripCricketMeta)
+      const meta = { provider: 'cricwix', commentaryAvailable: true, scorecardAvailable: true }
+
+      cricketMatchesCache = {
+        timestamp: Date.now(),
+        data: publicMatches,
+        meta,
+      }
+
+      let resultMatches = publicMatches
+      if (fromTime !== undefined || toTime !== undefined) {
+        resultMatches = resultMatches.filter((match) => {
+          const time = match.dateTime ? new Date(match.dateTime).getTime() : undefined
+          if (fromTime !== undefined && (time === undefined || time < fromTime)) return false
+          if (toTime !== undefined && (time === undefined || time > toTime)) return false
+          return true
+        })
+      }
+
+      return response.json({
+        data: resultMatches,
+        meta,
+      })
+    } catch (fetchError) {
+      if (cricketMatchesCache.data) {
+        let fallbackMatches = cricketMatchesCache.data
+        if (fromTime !== undefined || toTime !== undefined) {
+          fallbackMatches = fallbackMatches.filter((match) => {
+            const time = match.dateTime ? new Date(match.dateTime).getTime() : undefined
+            if (fromTime !== undefined && (time === undefined || time < fromTime)) return false
+            if (toTime !== undefined && (time === undefined || time > toTime)) return false
+            return true
+          })
+        }
+        return response.json({
+          data: fallbackMatches,
+          meta: cricketMatchesCache.meta,
+        })
+      }
+      throw fetchError
+    }
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/cricket/matches/:id', async (request, response, next) => {
+  try {
+    const matchId = normalizeText(request.params.id)
+    if (!/^[A-Za-z0-9_-]{1,100}$/.test(matchId)) return response.status(400).json({ error: 'Invalid cricket match id' })
+    const [liveResult, scorecardResult] = await Promise.allSettled([
+      fetchCricketProvider(`/live/${encodeURIComponent(matchId)}`),
+      fetchCricketProvider(`/fixtures/${encodeURIComponent(matchId)}/scorecard`),
+    ])
+    const liveData = liveResult.status === 'fulfilled' ? liveResult.value : {}
+    const scorecard = scorecardResult.status === 'fulfilled' ? scorecardResult.value : {}
+    const match = normalizeCricketMatch({ ...(liveData || {}), ...(scorecard || {}), fixture_id: matchId, id: matchId })
+    response.json({
+      data: { ...stripCricketMeta(match), scorecard, live: liveData },
+      meta: { provider: 'cricwix', commentaryAvailable: Boolean(liveData), scorecardAvailable: Boolean(scorecard) },
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/cricket/live/:id', async (request, response, next) => {
+  try {
+    const matchId = normalizeText(request.params.id)
+    if (!/^[A-Za-z0-9_-]{1,100}$/.test(matchId)) return response.status(400).json({ error: 'Invalid cricket match id' })
+    const data = await fetchCricketProvider(`/live/${encodeURIComponent(matchId)}`)
+    response.json({ data, meta: { provider: 'cricwix', commentaryAvailable: true } })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/cricket/scorecards/:id', async (request, response, next) => {
+  try {
+    const matchId = normalizeText(request.params.id)
+    if (!/^[A-Za-z0-9_-]{1,100}$/.test(matchId)) return response.status(400).json({ error: 'Invalid cricket match id' })
+    const data = await fetchCricketProvider(`/fixtures/${encodeURIComponent(matchId)}/scorecard`)
+    response.json({ data, meta: { provider: 'cricwix' } })
+  } catch (error) {
+    next(error)
+  }
+})
 
 app.post('/api/auth/login', async (request, response, next) => {
   try {
