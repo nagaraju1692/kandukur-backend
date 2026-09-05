@@ -1112,27 +1112,69 @@ app.delete('/api/admin/announcements/:id', async (request, response, next) => {
 app.post('/api/usage', async (request, response, next) => {
   try {
     await ensureSchema()
-    const userPhone = typeof request.body.userPhone === 'string' ? request.body.userPhone.replace(/\D/g, '') : null
-    const userName = typeof request.body.userName === 'string' && request.body.userName.trim() ? request.body.userName.trim() : null
-    const deviceId = typeof request.body.deviceId === 'string' && request.body.deviceId.trim() ? request.body.deviceId.trim() : null
-    const appVersion = typeof request.body.appVersion === 'string' && request.body.appVersion.trim() ? request.body.appVersion.trim() : null
-    const platform = typeof request.body.platform === 'string' && request.body.platform.trim() ? request.body.platform.trim() : null
+    const rawUserPhone = request.body.userPhone || request.body.user_phone
+    const userPhone = typeof rawUserPhone === 'string' ? rawUserPhone.replace(/\D/g, '') : null
+    const rawUserName = request.body.userName || request.body.user_name || (request.body.metadata && (request.body.metadata.userName || request.body.metadata.user_name))
+    const userName = typeof rawUserName === 'string' && rawUserName.trim() ? rawUserName.trim() : null
+    const rawDeviceId = request.body.deviceId || request.body.device_id
+    const deviceId = typeof rawDeviceId === 'string' && rawDeviceId.trim() ? rawDeviceId.trim() : null
+    const rawDeviceName = request.body.deviceName || request.body.device_name || (request.body.metadata && (request.body.metadata.deviceName || request.body.metadata.device_name || request.body.metadata.model))
+    const deviceName = typeof rawDeviceName === 'string' && rawDeviceName.trim() ? rawDeviceName.trim() : null
+
+    let location = null
+    const rawLocation = request.body.location || (request.body.metadata && (request.body.metadata.location || request.body.metadata.city))
+    if (typeof rawLocation === 'string' && rawLocation.trim()) {
+      location = rawLocation.trim()
+    } else if (rawLocation && typeof rawLocation === 'object') {
+      if (typeof rawLocation.city === 'string' && rawLocation.city.trim()) {
+        const region = typeof rawLocation.region === 'string' ? rawLocation.region.trim() : ''
+        location = [rawLocation.city.trim(), region].filter(Boolean).join(', ')
+      } else if (typeof rawLocation.name === 'string' && rawLocation.name.trim()) {
+        location = rawLocation.name.trim()
+      } else if (rawLocation.latitude !== undefined && rawLocation.longitude !== undefined) {
+        location = `${rawLocation.latitude}, ${rawLocation.longitude}`
+      } else {
+        location = JSON.stringify(rawLocation)
+      }
+    }
+
+    const rawAppVersion = request.body.appVersion || request.body.app_version
+    const appVersion = typeof rawAppVersion === 'string' && rawAppVersion.trim() ? rawAppVersion.trim() : null
+    const rawPlatform = request.body.platform
+    const platform = typeof rawPlatform === 'string' && rawPlatform.trim() ? rawPlatform.trim() : null
     const metadata = request.body.metadata && typeof request.body.metadata === 'object' ? request.body.metadata : {}
     if (!deviceId) return response.status(400).json({ error: 'Device identifier is required' })
 
     const { rows } = await query(
-      `INSERT INTO app_usage (id, user_phone, user_name, device_id, app_version, platform, metadata, visited_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NOW())
+      `INSERT INTO app_usage (id, user_phone, user_name, device_id, device_name, location, app_version, platform, metadata, visited_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, NOW())
        ON CONFLICT (device_id)
        DO UPDATE SET
-         user_phone = COALESCE(app_usage.user_phone, EXCLUDED.user_phone),
+         user_phone = COALESCE(EXCLUDED.user_phone, app_usage.user_phone),
          user_name = COALESCE(EXCLUDED.user_name, app_usage.user_name),
+         device_name = COALESCE(EXCLUDED.device_name, app_usage.device_name),
+         location = COALESCE(EXCLUDED.location, app_usage.location),
          app_version = COALESCE(EXCLUDED.app_version, app_usage.app_version),
          platform = COALESCE(EXCLUDED.platform, app_usage.platform),
          metadata = COALESCE(app_usage.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
          visited_at = NOW()
-       RETURNING id, user_phone AS "userPhone", user_name AS "userName", device_id AS "deviceId", app_version AS "appVersion", platform, metadata, visited_at AS "visitedAt"`,
-      [randomUUID(), userPhone || null, userName || null, deviceId, appVersion || null, platform || null, JSON.stringify(metadata)],
+       RETURNING id,
+                 user_phone AS "userPhone",
+                 user_phone,
+                 user_name AS "userName",
+                 user_name,
+                 device_id AS "deviceId",
+                 device_id,
+                 device_name AS "deviceName",
+                 device_name,
+                 location,
+                 app_version AS "appVersion",
+                 app_version,
+                 platform,
+                 metadata,
+                 visited_at AS "visitedAt",
+                 visited_at`,
+      [randomUUID(), userPhone || null, userName || null, deviceId, deviceName || null, location || null, appVersion || null, platform || null, JSON.stringify(metadata)],
     )
     response.status(201).json({ data: rows[0] })
   } catch (error) {
@@ -1184,22 +1226,79 @@ app.get('/api/admin/recent-activity', async (_request, response, next) => {
     if (!user) return
     const { rows } = await query(`
       WITH recent_reviews AS (
-        SELECT 'review' AS type, business_id AS entity_id, rating::text AS label, created_at AS created_at
-        FROM reviews
-        ORDER BY created_at DESC
+        SELECT
+          'review' AS type,
+          r.business_id AS entity_id,
+          r.rating::text AS label,
+          r.created_at AS created_at,
+          COALESCE(u.name, r.user_phone) AS user_name,
+          r.user_phone AS user_phone,
+          au.device_name AS device_name,
+          au.location AS location,
+          au.platform AS platform
+        FROM reviews r
+        LEFT JOIN users u ON r.user_phone = u.phone
+        LEFT JOIN LATERAL (
+          SELECT device_name, location, platform
+          FROM app_usage
+          WHERE user_phone = r.user_phone
+          ORDER BY visited_at DESC
+          LIMIT 1
+        ) au ON TRUE
+        ORDER BY r.created_at DESC
         LIMIT 5
       ), recent_feedback AS (
-        SELECT 'feedback' AS type, subject AS entity_id, type AS label, created_at AS created_at
-        FROM feedback_submissions
-        ORDER BY created_at DESC
+        SELECT
+          'feedback' AS type,
+          f.subject AS entity_id,
+          f.type AS label,
+          f.created_at AS created_at,
+          COALESCE(u.name, f.user_phone) AS user_name,
+          f.user_phone AS user_phone,
+          au.device_name AS device_name,
+          au.location AS location,
+          au.platform AS platform
+        FROM feedback_submissions f
+        LEFT JOIN users u ON f.user_phone = u.phone
+        LEFT JOIN LATERAL (
+          SELECT device_name, location, platform
+          FROM app_usage
+          WHERE user_phone = f.user_phone
+          ORDER BY visited_at DESC
+          LIMIT 1
+        ) au ON TRUE
+        ORDER BY f.created_at DESC
         LIMIT 5
       ), recent_usage AS (
-        SELECT 'usage' AS type, device_id AS entity_id, 'app visit' AS label, visited_at AS created_at
-        FROM app_usage
-        ORDER BY visited_at DESC
+        SELECT
+          'usage' AS type,
+          au.device_id AS entity_id,
+          'app visit' AS label,
+          au.visited_at AS created_at,
+          COALESCE(au.user_name, u.name, au.user_phone) AS user_name,
+          au.user_phone AS user_phone,
+          COALESCE(au.device_name, au.platform) AS device_name,
+          au.location AS location,
+          au.platform AS platform
+        FROM app_usage au
+        LEFT JOIN users u ON au.user_phone = u.phone
+        ORDER BY au.visited_at DESC
         LIMIT 5
       )
-      SELECT * FROM (
+      SELECT
+        type,
+        entity_id,
+        label,
+        created_at,
+        user_name,
+        user_name AS "userName",
+        user_phone,
+        user_phone AS "userPhone",
+        device_name,
+        device_name AS "deviceName",
+        location,
+        platform
+      FROM (
         SELECT * FROM recent_reviews
         UNION ALL
         SELECT * FROM recent_feedback

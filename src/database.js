@@ -146,6 +146,8 @@ export function ensureSchema() {
         user_phone TEXT REFERENCES users(phone) ON DELETE SET NULL,
         user_name TEXT,
         device_id TEXT NOT NULL,
+        device_name TEXT,
+        location TEXT,
         app_version TEXT,
         platform TEXT,
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -166,7 +168,7 @@ export function ensureSchema() {
       );
       CREATE UNIQUE INDEX IF NOT EXISTS app_usage_device_id_unique
         ON app_usage(device_id);
-            ALTER TABLE app_usage ADD COLUMN IF NOT EXISTS user_name TEXT;
+      ALTER TABLE app_usage ADD COLUMN IF NOT EXISTS user_name TEXT;
       ALTER TABLE app_usage ADD COLUMN IF NOT EXISTS app_version TEXT;
       ALTER TABLE app_usage ADD COLUMN IF NOT EXISTS platform TEXT;
       ALTER TABLE app_usage ADD COLUMN IF NOT EXISTS device_name TEXT;
